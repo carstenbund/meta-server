@@ -36,7 +36,7 @@
 
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      const currentDirectory = '/';  // Root directory
+      let currentDirectory = '/';  // Root directory
       loadDirectory(currentDirectory);
 
       function loadDirectory(directory) {
@@ -46,6 +46,16 @@
             const fileList = document.getElementById('file-list');
             fileList.innerHTML = '';  // Clear previous entries
 
+            // Add navigation to parent directory if not root
+            if (directory !== '/') {
+              const parentDir = directory.split('/').slice(0, -1).join('/') || '/';
+              const parentItem = document.createElement('div');
+              parentItem.className = 'file-item';
+              parentItem.textContent = '..';
+              parentItem.addEventListener('click', () => loadDirectory(parentDir));
+              fileList.appendChild(parentItem);
+            }
+
             data.forEach(file => {
               const fileItem = document.createElement('div');
               fileItem.className = 'file-item';
@@ -54,7 +64,7 @@
                 if (file.is_directory) {
                   loadDirectory(file.path);
                 } else {
-                  loadFileDetails(file.id);
+                  loadFileDetails(file.path);
                 }
               });
               fileList.appendChild(fileItem);
@@ -62,8 +72,8 @@
           });
       }
 
-      function loadFileDetails(fileId) {
-        fetch(`/files/${fileId}`)
+      function loadFileDetails(filePath) {
+        fetch(`/files/${encodeURIComponent(filePath)}`)
           .then(response => response.json())
           .then(data => {
             const metadata = data.metadata;

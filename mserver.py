@@ -4,11 +4,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Float
 from flask_cors import CORS
-from tika import parser
 import os
 import threading
 import time
-import requests
+import requests  # Used to communicate with the Tika server
 
 # Database setup
 DATABASE_URI = 'sqlite:///files.db'
@@ -58,33 +57,26 @@ scan_thread = threading.Thread(target=process_scan_queue)
 scan_thread.daemon = True
 scan_thread.start()
 
+# Function to extract text using Tika server
+def extract_text_with_tika(file_path):
+    with open(file_path, 'rb') as file:
+        response = requests.put('http://localhost:9998/tika', files={'file': file})
+        if response.status_code == 200:
+            return response.text
+        else:
+            return ""
+
 # Function to scan and update a single file
 def scan_and_update_file(file_path):
     session = Session()
-    # Function to get PE file info
-    def get_pe_info(file_path):
-        try:
-            pe = pefile.PE(file_path)
-            pe_info = {
-                "entry_point": pe.OPTIONAL_HEADER.AddressOfEntryPoint,
-                "image_base": pe.OPTIONAL_HEADER.ImageBase,
-                "number_of_sections": pe.FILE_HEADER.NumberOfSections
-            }
-            return str(pe_info)
-        except Exception as e:
-            return str(e)
-
-    # Read the file content
-    with open(file_path, 'r') as file:
-        content = file.read()
+    content = extract_text_with_tika(file_path)
 
     # Implement the scanning logic
-    pe_info = get_pe_info(file_path) if file_path.lower().endswith('.exe') else ''
     metadata = FileMetadata(
         path=file_path,
         size=os.path.getsize(file_path),
         modification_date=os.path.getmtime(file_path),
-        pe_info=pe_info
+        content=content
     )
     session.add(metadata)
     session.commit()
@@ -97,20 +89,18 @@ def list_files():
     files = []
     for filename in os.listdir(directory):
         file_path = os.path.join(directory, filename)
-        if os.path.isfile(file_path):
-            files.append({
-                'path': file_path,
-                'size': os.path.getsize(file_path),
-                'modification_date': os.path.getmtime(file_path)
-            })
+        files.append({
+            'path': file_path,
+            'is_directory': os.path.isdir(file_path),
+            'id': filename if os.path.isfile(file_path) else None
+        })
     return jsonify(files)
 
 # Endpoint to get file details and content
-@app.route('/files/<int:file_id>', methods=['GET'])
+@app.route('/files/<path:file_id>', methods=['GET'])
 def get_file(file_id):
-    file = session.query(FileMetadata).get(file_id)
+    file = session.query(FileMetadata).filter_by(path=file_id).first()
     if file:
-        file_content = parser.from_file(file.path)
         return jsonify({
             'metadata': {
                 'id': file.id,
@@ -120,14 +110,13 @@ def get_file(file_id):
                 'category': file.category,
                 'inferred_category': file.inferred_category,
                 'keywords': file.keywords,
-                'summary': file.summary,
-                'pe_info': file.pe_info
+                'summary': file.summary
             },
-            'content': file_content['content']
+            'content': file.content
         })
     else:
         with queue_lock:
-            scan_queue.append(file.path)
+            scan_queue.append(file_id)
         return jsonify({'error': 'File not found, added to scan queue'}), 404
 
 # Route to serve the HTML file
@@ -135,8 +124,6 @@ def get_file(file_id):
 def serve_html():
     return send_from_directory(app.static_folder, 'index.html')
 
-if __name__ == '__main__':
-    app.run(debug=True)
 if __name__ == '__main__':
 
     WEB_IP = '0.0.0.0'
