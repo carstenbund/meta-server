@@ -1,14 +1,14 @@
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import Column, Integer, String, Float
 from flask_cors import CORS
 from tika import parser
+import os
 import threading
 import time
-import os
-import requests  # Used to communicate with the inference server
+import requests
 
 # Database setup
 DATABASE_URI = 'sqlite:///files.db'
@@ -28,7 +28,7 @@ class FileMetadata(Base):
     inferred_category = Column(String, nullable=True)
     keywords = Column(String, nullable=True)
     summary = Column(String, nullable=True)
-    pe_info = Column(String, nullable=True)
+    content = Column(String, nullable=False)
 
 # Ensure database tables are created
 Base.metadata.create_all(engine)
@@ -61,7 +61,6 @@ scan_thread.start()
 # Function to scan and update a single file
 def scan_and_update_file(file_path):
     session = Session()
-
     # Function to get PE file info
     def get_pe_info(file_path):
         try:
@@ -75,27 +74,9 @@ def scan_and_update_file(file_path):
         except Exception as e:
             return str(e)
 
-    # Extract content based on file type
-    content = ""
-    if file_path.lower().endswith('.pdf'):
-        content = extract_text_from_pdf(file_path)
-    elif file_path.lower().endswith('.docx'):
-        content = extract_text_from_docx(file_path)
-    else:
-        parsed = parser.from_file(file_path)
-        content = parsed['content'] if parsed and 'content' in parsed else ''
-
-    # Send content to inference server
-    relative_path = os.path.relpath(file_path, start='/path/to/your/files')
-    inference_response = requests.post('http://localhost:5001/infer', json={'file_path': relative_path})
-    if inference_response.status_code == 200:
-        inference_data = inference_response.json()
-    else:
-        inference_data = {
-            'inferred_category': 'N/A',
-            'keywords': 'N/A',
-            'summary': 'N/A'
-        }
+    # Read the file content
+    with open(file_path, 'r') as file:
+        content = file.read()
 
     # Implement the scanning logic
     pe_info = get_pe_info(file_path) if file_path.lower().endswith('.exe') else ''
@@ -103,30 +84,26 @@ def scan_and_update_file(file_path):
         path=file_path,
         size=os.path.getsize(file_path),
         modification_date=os.path.getmtime(file_path),
-        inferred_category=inference_data['inferred_category'],
-        keywords=inference_data['keywords'],
-        summary=inference_data['summary'],
         pe_info=pe_info
     )
     session.add(metadata)
     session.commit()
     session.close()
 
-# Endpoint to list all files
+# Endpoint to list files in a directory
 @app.route('/files', methods=['GET'])
 def list_files():
-    files = session.query(FileMetadata).all()
-    return jsonify([{
-        'id': file.id,
-        'path': file.path,
-        'size': file.size,
-        'modification_date': file.modification_date,
-        'category': file.category,
-        'inferred_category': file.inferred_category,
-        'keywords': file.keywords,
-        'summary': file.summary,
-        'pe_info': file.pe_info
-    } for file in files])
+    directory = request.args.get('directory', '/')
+    files = []
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+        if os.path.isfile(file_path):
+            files.append({
+                'path': file_path,
+                'size': os.path.getsize(file_path),
+                'modification_date': os.path.getmtime(file_path)
+            })
+    return jsonify(files)
 
 # Endpoint to get file details and content
 @app.route('/files/<int:file_id>', methods=['GET'])
@@ -159,10 +136,13 @@ def serve_html():
     return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
- 
+    app.run(debug=True)
+if __name__ == '__main__':
+
     WEB_IP = '0.0.0.0'
     WEB_PORT = 5000
     # app run - till canceled
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
+
 
 
