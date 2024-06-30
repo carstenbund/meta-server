@@ -1,31 +1,47 @@
 from flask import Flask, request, jsonify
 import fitz  # PyMuPDF
 import docx
-from transformers import DistilBertTokenizer, DistilBertForSequenceClassification, pipeline
-from transformers import BartTokenizer, BartForConditionalGeneration
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+from transformers import MarianMTModel, MarianTokenizer, BartTokenizer, BartForConditionalGeneration
+from langdetect import detect
 import spacy
 import os
 
 app = Flask(__name__)
 
 # Set the custom cache directory (optional)
-os.environ['TRANSFORMERS_CACHE'] = '/path/to/custom/cache'
+os.environ['TRANSFORMERS_CACHE'] = '/var/server/data/transformers/cache'
 
-# Initialize the DistilBERT tokenizer and model for category inference
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
-classifier = pipeline('sentiment-analysis', model=model, tokenizer=tokenizer)
+# Initialize the tokenizer and model for English text classification
+english_tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
+english_model = AutoModelForSequenceClassification.from_pretrained('distilbert-base-uncased')
+english_classifier = pipeline('text-classification', model=english_model, tokenizer=english_tokenizer)
 
-# Initialize the BART tokenizer and model for summarization
+# Initialize the tokenizer and model for Dutch text classification
+dutch_tokenizer = AutoTokenizer.from_pretrained('wietsedv/bert-base-dutch-cased')
+dutch_model = AutoModelForSequenceClassification.from_pretrained('wietsedv/bert-base-dutch-cased')
+dutch_classifier = pipeline('text-classification', model=dutch_model, tokenizer=dutch_tokenizer)
+
+# Initialize the tokenizer and model for English summarization
 summarizer_tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
 summarizer_model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
 summarizer = pipeline('summarization', model=summarizer_model, tokenizer=summarizer_tokenizer)
 
-# Initialize spaCy for keyword extraction
-nlp = spacy.load("en_core_web_sm")
+# Initialize spaCy for keyword extraction in English and Dutch
+spacy_en = spacy.load("en_core_web_sm")
+spacy_nl = spacy.load("nl_core_news_sm")
+
+# Initialize translation models
+nl_to_en_tokenizer = MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-nl-en')
+nl_to_en_model = MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-nl-en')
+nl_to_en_translator = pipeline('translation', model=nl_to_en_model, tokenizer=nl_to_en_tokenizer)
+
+en_to_ja_tokenizer = MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-jap')
+en_to_ja_model = MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-jap')
+en_to_ja_translator = pipeline('translation', model=en_to_ja_model, tokenizer=en_to_ja_tokenizer)
 
 # Set the base directory for file storage
-BASE_DIR = '/path/to/your/files'
+BASE_DIR = '/win95/mcrlnsalg/'
 
 def extract_text_from_pdf(file_path):
     doc = fitz.open(file_path)
@@ -41,12 +57,25 @@ def extract_text_from_docx(file_path):
         text.append(paragraph.text)
     return '\n'.join(text)
 
-def infer_category(text):
-    results = classifier(text)
+def translate_text(text, source_lang, target_lang='en'):
+    if source_lang == 'nl' and target_lang == 'en':
+        return nl_to_en_translator(text, max_length=512)[0]['translation_text']
+    elif source_lang == 'en' and target_lang == 'ja':
+        return en_to_ja_translator(text, max_length=512)[0]['translation_text']
+    return text  # No translation needed if already in target language
+
+def infer_category(text, language='en'):
+    if language == 'nl':
+        results = dutch_classifier(text)
+    else:
+        results = english_classifier(text)
     return results[0]['label'] if results else 'N/A'
 
-def extract_keywords(text):
-    doc = nlp(text)
+def extract_keywords(text, language='en'):
+    if language == 'nl':
+        doc = spacy_nl(text)
+    else:
+        doc = spacy_en(text)
     keywords = [chunk.text for chunk in doc.noun_chunks]
     return ', '.join(keywords)
 
@@ -72,16 +101,34 @@ def infer():
     else:
         return jsonify({'error': 'Unsupported file type'}), 400
 
+    # Detect the language of the content
+    source_lang = detect(content)
+    if source_lang == 'nl':
+        content = translate_text(content, source_lang, 'en')
+
+    inferred_category = infer_category(content, 'en')
+    keywords = extract_keywords(content, 'en')
+    summary = summarize_content(content)
+
     return jsonify({
-        'inferred_category': infer_category(content),
-        'keywords': extract_keywords(content),
-        'summary': summarize_content(content)
+        'inferred_category': inferred_category,
+        'keywords': keywords,
+        'summary': summary,
+        'content': content  # Include the English content
     })
 
+@app.route('/translate', methods=['POST'])
+def translate():
+    text = request.json.get('text')
+    target_lang = request.json.get('target_lang')
+    if not text or not target_lang:
+        return jsonify({'error': 'Text and target language must be provided'}), 400
+
+    source_lang = detect(text)
+    translated_text = translate_text(text, source_lang, target_lang)
+    
+    return jsonify({'translated_text': translated_text})
+
 if __name__ == '__main__':
-
-    WEB_IP = '0.0.0.0'
-    WEB_PORT = 5001
-
-    app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
+    app.run(port=5001, debug=True)
 
