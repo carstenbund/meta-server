@@ -30,6 +30,7 @@ class FileMetadata(Base):
     file_type = Column(String, nullable=True)
     creator_software = Column(String, nullable=True)
     origin_date = Column(String, nullable=True)
+    pe_info = Column(String, nullable=True)  # New column for PE file information
 
 # Ensure database tables are created
 Base.metadata.create_all(engine)
@@ -65,6 +66,13 @@ def scan_directory(directory):
     for subdir, _, files in os.walk(directory):
         for file in files:
             file_path = os.path.join(subdir, file)
+
+            # Check if file already exists in the database
+            existing_file = session.query(FileMetadata).filter_by(path=file_path).first()
+            if existing_file:
+                print(f"File {file_path} already exists in the database, skipping.")
+                continue
+
             file_extension = os.path.splitext(file_path)[1].lower()
             
             print(f"Processing file: {file_path}")
@@ -87,43 +95,55 @@ def scan_directory(directory):
             keywords = None
             summary = None
             origin_date = str(modification_date)
-            
+            pe_info = ""
+
             if file_type == 'image':
                 print(f"Handling image file: {file_path}")
+                inferred_category = 'Image'
             elif file_extension == '.exe':
                 content = get_pe_info(file_path)
                 inferred_category = 'Executable'
                 print(f"Extracted PE info: {content}")
-            else:
+            elif file_extension in ['.pdf', '.doc', '.docx']:
+                print(f"Tika parsing {file_path}")
                 parsed = parser.from_file(file_path)
+                inferred_category = 'Document'
                 content = parsed.get('content', '') if parsed else ''
-                print(f"Extracted content: {content[:100]}...")  # Print first 100 characters of content
+                if content:
+                    print(f"Extracted content: {content[:20]}...")  # Print first 20 characters of content
                 
                 # Detect the language of the content
-                source_lang = detect(content) if content else 'unknown'
-                print(f"Detected language: {source_lang}")
-                
-                payload = {
-                    'file_path': file_path,
-                    'content': content,
-                    'language': source_lang
-                }
-                
-                # Send content to inference server for processing
-                response = requests.post('http://localhost:5001/infer', json=payload)
-                if response.status_code == 200:
-                    data = response.json()
-                    print(f"Inference server response: {data}")
-                    inferred_category = data.get('category')
-                    keywords = data.get('keywords')
-                    summary = data.get('summary')
+                if content:
+                    source_lang = detect(content)
+                    print(f"Detected language: {source_lang}")
+                    
+                    payload = {
+                        'file_path': file_path,
+                        'content': content[:500],
+                        'language': source_lang
+                    }
+                    
+                    # Send content to inference server for processing
+                    response = requests.post('http://localhost:5001/infer', json=payload)
+                    if response.status_code == 200:
+                        data = response.json()
+                        print(f"Inference server response: {data}")
+                        inferred_category = data.get('category')
+                        keywords = data.get('keywords')
+                        summary = data.get('summary')
 
-                    # Include the summary in the content for PDF and DOC/DOCX files
-                    if file_extension in ['.pdf', '.doc', '.docx']:
-                        content = summary
+                        # Include the summary in the content for PDF and DOC/DOCX files
+                        if file_extension in ['.pdf', '.doc', '.docx']:
+                            content = summary
+                    else:
+                        print(f"Error processing file {file_path}: {response.text}")
                 else:
-                    print(f"Error processing file {file_path}: {response.text}")
-
+                    print(f"No content extracted from {file_path}")
+            else: 
+                print(f"Entering file {file_path} of type {file_type}")
+                if not content:
+                    print(f"No content extracted from {file_path}")
+            
             metadata = FileMetadata(
                 path=file_path,
                 size=size,
@@ -135,7 +155,8 @@ def scan_directory(directory):
                 content=content,
                 file_type=file_type,
                 creator_software=creator_software,
-                origin_date=origin_date
+                origin_date=origin_date,
+                pe_info=pe_info
             )
             session.add(metadata)
             session.commit()
