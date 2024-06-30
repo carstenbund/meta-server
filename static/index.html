@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File Browser</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .file-list { margin: 20px 0; }
+    .file-item { cursor: pointer; padding: 5px; border-bottom: 1px solid #ccc; }
+    .file-item:hover { background-color: #f0f0f0; }
+    .file-details { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>File Browser</h1>
+  <div class="file-list" id="file-list"></div>
+  <div class="file-details" id="file-details">
+    <h2>Metadata</h2>
+    <div><strong>Path:</strong> <span id="path"></span></div>
+    <div><strong>Size:</strong> <span id="size"></span></div>
+    <div><strong>Modification Date:</strong> <span id="modification_date"></span></div>
+    <div><strong>Category:</strong> <span id="category"></span></div>
+    <div><strong>Inferred Category:</strong> <span id="inferred_category"></span></div>
+    <div><strong>Keywords:</strong> <span id="keywords"></span></div>
+    <div><strong>Summary:</strong> <span id="summary"></span></div>
+    <div><strong>PE Info:</strong> <span id="pe_info"></span></div>
+    <h2>Content</h2>
+    <pre id="content"></pre>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      fetch('/files')
+        .then(response => response.json())
+        .then(data => {
+          const fileList = document.getElementById('file-list');
+          data.forEach(file => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.textContent = file.path;
+            fileItem.addEventListener('click', () => loadFileDetails(file.id));
+            fileList.appendChild(fileItem);
+          });
+        });
+
+      function loadFileDetails(fileId) {
+        fetch(`/files/${fileId}`)
+          .then(response => response.json())
+          .then(data => {
+            const metadata = data.metadata;
+            document.getElementById('path').textContent = metadata.path;
+            document.getElementById('size').textContent = metadata.size;
+            document.getElementById('modification_date').textContent = new Date(metadata.modification_date * 1000).toLocaleString();
+            document.getElementById('category').textContent = metadata.category || 'N/A';
+            document.getElementById('inferred_category').textContent = metadata.inferred_category || 'N/A';
+            document.getElementById('keywords').textContent = metadata.keywords || 'N/A';
+            document.getElementById('summary').textContent = metadata.summary || 'N/A';
+            document.getElementById('pe_info').textContent = metadata.pe_info || 'N/A';
+            document.getElementById('content').textContent = data.content || 'N/A';
+          });
+      }
+    });
+  </script>
+</body>
+</html>
+
