@@ -1,16 +1,15 @@
 import os
-import fitz  # PyMuPDF
-import docx
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-from transformers import MarianMTModel, MarianTokenizer, BartTokenizer, BartForConditionalGeneration
-from langdetect import detect
-import spacy
+import requests
+import magic
 from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+from langdetect import detect
+from tika import parser
+import pefile
 
 # Database setup
-DATABASE_URI = 'sqlite:///files.db'
+DATABASE_URI = 'sqlite:///instance/files.db'
 Base = declarative_base()
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
@@ -24,78 +23,43 @@ class FileMetadata(Base):
     size = Column(Integer, nullable=False)
     modification_date = Column(Float, nullable=False)
     category = Column(String, nullable=True)
+    inferred_category = Column(String, nullable=True)
     keywords = Column(String, nullable=True)
     summary = Column(String, nullable=True)
-    content = Column(String, nullable=False)
+    content = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+    creator_software = Column(String, nullable=True)
+    origin_date = Column(String, nullable=True)
 
 # Ensure database tables are created
 Base.metadata.create_all(engine)
 
-# Initialize the tokenizer and model for English text classification
-english_tokenizer = AutoTokenizer.from_pretrained('distilbert-base-uncased')
-english_model = AutoModelForSequenceClassification.from_pretrained('distilbert-base-uncased')
-english_classifier = pipeline('text-classification', model=english_model, tokenizer=english_tokenizer)
+# Function to extract metadata from the file path
+def infer_metadata_from_path(file_path):
+    parts = file_path.split(os.sep)
+    category = parts[-2] if len(parts) > 1 else 'Unknown'
+    return category
 
-# Initialize the tokenizer and model for Dutch text classification
-dutch_tokenizer = AutoTokenizer.from_pretrained('wietsedv/bert-base-dutch-cased')
-dutch_model = AutoModelForSequenceClassification.from_pretrained('wietsedv/bert-base-dutch-cased')
-dutch_classifier = pipeline('text-classification', model=dutch_model, tokenizer=dutch_tokenizer)
+# Function to use python-magic for file type detection
+def detect_file_type(file_path):
+    file_magic = magic.Magic(mime=True)
+    mime_type = file_magic.from_file(file_path)
+    file_type = mime_type.split('/')[0]
+    creator_software = mime_type.split('/')[1] if len(mime_type.split('/')) > 1 else 'Unknown'
+    return mime_type, file_type, creator_software
 
-# Initialize the tokenizer and model for English summarization
-summarizer_tokenizer = BartTokenizer.from_pretrained('facebook/bart-large-cnn')
-summarizer_model = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
-summarizer = pipeline('summarization', model=summarizer_model, tokenizer=summarizer_tokenizer)
-
-# Initialize spaCy for keyword extraction in English and Dutch
-spacy_en = spacy.load("en_core_web_sm")
-spacy_nl = spacy.load("nl_core_news_sm")
-
-# Initialize translation models
-nl_to_en_tokenizer = MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-nl-en')
-nl_to_en_model = MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-nl-en')
-nl_to_en_translator = pipeline('translation', model=nl_to_en_model, tokenizer=nl_to_en_tokenizer)
-
-def extract_text_from_pdf(file_path):
-    doc = fitz.open(file_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text
-
-def extract_text_from_docx(file_path):
-    doc = docx.Document(file_path)
-    text = []
-    for paragraph in doc.paragraphs:
-        text.append(paragraph.text)
-    return '\n'.join(text)
-
-def extract_text_from_txt(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return file.read()
-
-def translate_text(text, source_lang, target_lang='en'):
-    if source_lang == 'nl' and target_lang == 'en':
-        return nl_to_en_translator(text, max_length=512)[0]['translation_text']
-    return text  # No translation needed if already in target language
-
-def infer_category(text, language='en'):
-    if language == 'nl':
-        results = dutch_classifier(text)
-    else:
-        results = english_classifier(text)
-    return results[0]['label'] if results else 'N/A'
-
-def extract_keywords(text, language='en'):
-    if language == 'nl':
-        doc = spacy_nl(text)
-    else:
-        doc = spacy_en(text)
-    keywords = [chunk.text for chunk in doc.noun_chunks]
-    return ', '.join(keywords)
-
-def summarize_content(text):
-    results = summarizer(text, max_length=150, min_length=40, do_sample=False)
-    return results[0]['summary_text'] if results else 'N/A'
+# Function to get PE file info
+def get_pe_info(file_path):
+    try:
+        pe = pefile.PE(file_path)
+        pe_info = {
+            "entry_point": pe.OPTIONAL_HEADER.AddressOfEntryPoint,
+            "image_base": pe.OPTIONAL_HEADER.ImageBase,
+            "number_of_sections": pe.FILE_HEADER.NumberOfSections
+        }
+        return str(pe_info)
+    except Exception as e:
+        return str(e)
 
 def scan_directory(directory):
     for subdir, _, files in os.walk(directory):
@@ -103,36 +67,80 @@ def scan_directory(directory):
             file_path = os.path.join(subdir, file)
             file_extension = os.path.splitext(file_path)[1].lower()
             
-            if file_extension in ['.pdf', '.docx', '.txt']:
-                if file_extension == '.pdf':
-                    content = extract_text_from_pdf(file_path)
-                elif file_extension == '.docx':
-                    content = extract_text_from_docx(file_path)
-                elif file_extension == '.txt':
-                    content = extract_text_from_txt(file_path)
+            print(f"Processing file: {file_path}")
+            
+            # Detect file type and creator software
+            mime_type, file_type, creator_software = detect_file_type(file_path)
+            print(f"Detected MIME type: {mime_type}, file type: {file_type}, creator software: {creator_software}")
+            
+            # Log file size, modification date, and content
+            size = os.path.getsize(file_path)
+            modification_date = os.path.getmtime(file_path)
+            print(f"File size: {size}, modification date: {modification_date}")
+            
+            # Extract metadata using file path
+            category = infer_metadata_from_path(file_path)
+            print(f"Inferred category from path: {category}")
+
+            content = ""
+            inferred_category = None
+            keywords = None
+            summary = None
+            origin_date = str(modification_date)
+            
+            if file_type == 'image':
+                print(f"Handling image file: {file_path}")
+            elif file_extension == '.exe':
+                content = get_pe_info(file_path)
+                inferred_category = 'Executable'
+                print(f"Extracted PE info: {content}")
+            else:
+                parsed = parser.from_file(file_path)
+                content = parsed.get('content', '') if parsed else ''
+                print(f"Extracted content: {content[:100]}...")  # Print first 100 characters of content
                 
                 # Detect the language of the content
-                source_lang = detect(content)
-                if source_lang == 'nl':
-                    content = translate_text(content, source_lang, 'en')
+                source_lang = detect(content) if content else 'unknown'
+                print(f"Detected language: {source_lang}")
+                
+                payload = {
+                    'file_path': file_path,
+                    'content': content,
+                    'language': source_lang
+                }
+                
+                # Send content to inference server for processing
+                response = requests.post('http://localhost:5001/infer', json=payload)
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"Inference server response: {data}")
+                    inferred_category = data.get('category')
+                    keywords = data.get('keywords')
+                    summary = data.get('summary')
 
-                inferred_category = infer_category(content, 'en')
-                keywords = extract_keywords(content, 'en')
-                summary = summarize_content(content)
+                    # Include the summary in the content for PDF and DOC/DOCX files
+                    if file_extension in ['.pdf', '.doc', '.docx']:
+                        content = summary
+                else:
+                    print(f"Error processing file {file_path}: {response.text}")
 
-                metadata = FileMetadata(
-                    path=file_path,
-                    size=os.path.getsize(file_path),
-                    modification_date=os.path.getmtime(file_path),
-                    category=inferred_category,
-                    keywords=keywords,
-                    summary=summary,
-                    content=content
-                )
-                session.add(metadata)
-                session.commit()
+            metadata = FileMetadata(
+                path=file_path,
+                size=size,
+                modification_date=modification_date,
+                category=category,
+                inferred_category=inferred_category,
+                keywords=keywords,
+                summary=summary,
+                content=content,
+                file_type=file_type,
+                creator_software=creator_software,
+                origin_date=origin_date
+            )
+            session.add(metadata)
+            session.commit()
+            print(f"Metadata for {file_path} added to database.")
 
 if __name__ == '__main__':
-    directory_to_scan = '/path/to/your/files'
+    directory_to_scan = '/win95/mcrlnsalg/'
     scan_directory(directory_to_scan)
-

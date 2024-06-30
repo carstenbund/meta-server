@@ -10,7 +10,7 @@ import time
 import requests  # Used to communicate with the Tika server
 
 # Database setup
-DATABASE_URI = 'sqlite:///files.db'
+DATABASE_URI = 'sqlite:///instance/files.db'
 Base = declarative_base()
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
@@ -27,7 +27,7 @@ class FileMetadata(Base):
     inferred_category = Column(String, nullable=True)
     keywords = Column(String, nullable=True)
     summary = Column(String, nullable=True)
-    content = Column(String, nullable=False)
+    content = Column(String, nullable=False)  # New field
 
 # Ensure database tables are created
 Base.metadata.create_all(engine)
@@ -85,7 +85,8 @@ def scan_and_update_file(file_path):
 # Endpoint to list files in a directory
 @app.route('/files', methods=['GET'])
 def list_files():
-    directory = request.args.get('directory', '/')
+    directory = request.args.get('directory', BASE_DIR)
+    print(directory)
     files = []
     for filename in os.listdir(directory):
         file_path = os.path.join(directory, filename)
@@ -125,6 +126,9 @@ def serve_html():
     return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
+
+    # Set the base directory
+    BASE_DIR = '/win95/mcrlnsalg'
 
     WEB_IP = '0.0.0.0'
     WEB_PORT = 5000
