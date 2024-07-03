@@ -63,9 +63,6 @@ Base.metadata.create_all(engine)
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
-# Set the base directory
-BASE_DIR = '/win95/mcrlnsalg'
-
 # Initialize a queue for files to be scanned
 scan_queue = []
 
@@ -331,9 +328,9 @@ def serve_thumbnail(filename):
     png_thumbnail = base_name + '.png'
     jpg_thumbnail = base_name + '.jpg'
 
-    webp_path = os.path.join(thumbnails_dir, webp_thumbnail)
-    png_path = os.path.join(thumbnails_dir, png_thumbnail)
-    jpg_path = os.path.join(thumbnails_dir, jpg_thumbnail)
+    webp_path = os.path.join(THUMBNAILS_DIR, webp_thumbnail)
+    png_path = os.path.join(THUMBNAILS_DIR, png_thumbnail)
+    jpg_path = os.path.join(THUMBNAILS_DIR, jpg_thumbnail)
 
     log.debug(f"WebP path: {webp_path}")
     log.debug(f"PNG path: {png_path}")
@@ -370,7 +367,7 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
 def viewjs(file_path):
     preview_url = f"{file_path}"
     log.debug(f"Preview  Url: {preview_url}")
-    return send_from_directory(static_dir, preview_url)
+    return send_from_directory(STATIC_DIR, preview_url)
 
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
@@ -380,11 +377,13 @@ def preview_file(file_path):
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
-    return send_from_directory(static_dir, filename)
+    return send_from_directory(STATIC_DIR, filename)
+# Set the base directory
 
-base_dir = '/win95/mcrlnsalg'
-static_dir = '/var/server/data/meta-server/static'
-thumbnails_dir = '/var/server/data/meta-server/thumbnails'
+
+BASE_DIR = '/win95/mcrlnsalg'
+STATIC_DIR = '/var/server/data/meta-server/static'
+THUMBNAILS_DIR = '/var/server/data/meta-server/thumbnails'
 
 if __name__ == '__main__':
     WEB_IP = '0.0.0.0'
