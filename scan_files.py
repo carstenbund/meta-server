@@ -1,12 +1,19 @@
 import os
+import logging
 import requests
 import magic
+import re
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 from tika import parser
 import pefile
+from MyLogger import Logger
+
+# Create a logger instance
+log = Logger(log_name='scan_files', log_level=logging.DEBUG).get_logger()
 
 # Database setup
 DATABASE_URI = 'sqlite:///instance/files.db'
@@ -62,33 +69,44 @@ def get_pe_info(file_path):
     except Exception as e:
         return str(e)
 
+def clean_text(text):
+    # Remove extra newlines
+    text = re.sub(r'\n+', '\n', text)
+    # Remove leading and trailing whitespace
+    text = text.strip()
+    # Reduce multiple spaces to a single space
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
 def scan_directory(directory):
     for subdir, _, files in os.walk(directory):
         for file in files:
+            if file.startswith('.'):
+                continue
             file_path = os.path.join(subdir, file)
 
             # Check if file already exists in the database
             existing_file = session.query(FileMetadata).filter_by(path=file_path).first()
             if existing_file:
-                print(f"File {file_path} already exists in the database, skipping.")
+                log.debug(f"File {file_path} already exists in the database, skipping.")
                 continue
 
             file_extension = os.path.splitext(file_path)[1].lower()
             
-            print(f"Processing file: {file_path}")
+            log.debug(f"Processing file: {file_path}")
             
             # Detect file type and creator software
             mime_type, file_type, creator_software = detect_file_type(file_path)
-            print(f"Detected MIME type: {mime_type}, file type: {file_type}, creator software: {creator_software}")
+            log.debug(f"Detected MIME type: {mime_type}, file type: {file_type}, creator software: {creator_software}")
             
             # Log file size, modification date, and content
             size = os.path.getsize(file_path)
             modification_date = os.path.getmtime(file_path)
-            print(f"File size: {size}, modification date: {modification_date}")
+            log.debug(f"File size: {size}, modification date: {modification_date}")
             
             # Extract metadata using file path
             category = infer_metadata_from_path(file_path)
-            print(f"Inferred category from path: {category}")
+            log.debug(f"Inferred category from path: {category}")
 
             content = ""
             inferred_category = None
@@ -98,24 +116,31 @@ def scan_directory(directory):
             pe_info = ""
 
             if file_type == 'image':
-                print(f"Handling image file: {file_path}")
+                log.debug(f"Handling image file: {file_path}")
                 inferred_category = 'Image'
             elif file_extension == '.exe':
                 content = get_pe_info(file_path)
                 inferred_category = 'Executable'
-                print(f"Extracted PE info: {content}")
+                log.debug(f"Extracted PE info: {content}")
             elif file_extension in ['.pdf', '.doc', '.docx']:
-                print(f"Tika parsing {file_path}")
+                log.debug(f"skipping {file_path}")
+                continue
+                log.debug(f"Tika parsing {file_path}")
                 parsed = parser.from_file(file_path)
                 inferred_category = 'Document'
                 content = parsed.get('content', '') if parsed else ''
-                if content:
-                    print(f"Extracted content: {content[:20]}...")  # Print first 20 characters of content
                 
-                # Detect the language of the content
                 if content:
-                    source_lang = detect(content)
-                    print(f"Detected language: {source_lang}")
+                    log.debug(f"Extracted content: {content[:20]}...")  # Print first 20 characters of content
+
+                    content = clean_text(content)
+
+                    # Detect the language of the content
+                    try:
+                        source_lang = detect(content) if content else 'unknown'
+                    except LangDetectException:
+                        source_lang = 'unknown'
+                    log.debug(f"Detected language: {source_lang}")
                     
                     payload = {
                         'file_path': file_path,
@@ -127,7 +152,7 @@ def scan_directory(directory):
                     response = requests.post('http://localhost:5001/infer', json=payload)
                     if response.status_code == 200:
                         data = response.json()
-                        print(f"Inference server response: {data}")
+                        log.debug(f"Inference server response: {data}")
                         inferred_category = data.get('category')
                         keywords = data.get('keywords')
                         summary = data.get('summary')
@@ -136,13 +161,13 @@ def scan_directory(directory):
                         if file_extension in ['.pdf', '.doc', '.docx']:
                             content = summary
                     else:
-                        print(f"Error processing file {file_path}: {response.text}")
+                        log.debug(f"Error processing file {file_path}: {response.text}")
                 else:
-                    print(f"No content extracted from {file_path}")
+                    log.debug(f"No content extracted from {file_path}")
             else: 
-                print(f"Entering file {file_path} of type {file_type}")
+                log.debug(f"Entering file {file_path} of type {file_type}")
                 if not content:
-                    print(f"No content extracted from {file_path}")
+                    log.debug(f"No content extracted from {file_path}")
             
             metadata = FileMetadata(
                 path=file_path,
@@ -160,7 +185,7 @@ def scan_directory(directory):
             )
             session.add(metadata)
             session.commit()
-            print(f"Metadata for {file_path} added to database.")
+            log.debug(f"Metadata for {file_path} added to database.")
 
 if __name__ == '__main__':
     directory_to_scan = '/win95/mcrlnsalg/'
