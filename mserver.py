@@ -363,11 +363,15 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
         abort(500, description="Internal Server Error")
 
 
-@app.route('/ViewerJS/index.html<path:file_path>', methods=['GET','HEAD', 'POST'])
-def viewjs(file_path):
-    preview_url = f"{file_path}"
-    log.debug(f"Preview  Url: {preview_url}")
-    return send_from_directory(STATIC_DIR, preview_url)
+@app.route('/preview/<path:filename>')
+def preview(filename):
+    if filename.endswith('.pdf'):
+        return render_template('pdf_preview.html', file_url=f"/files/{filename}")
+    elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
+        return render_template('docx_preview.html', file_url=f"/files/{filename}")
+    else:
+        return "File type not supported", 400
+
 
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
