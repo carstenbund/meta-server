@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, Response, send_from_directory, g, abort
+from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
@@ -363,21 +363,28 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
         abort(500, description="Internal Server Error")
 
 
-@app.route('/preview/<path:filename>')
+@app.route('/doc_preview/<path:filename>')
 def preview(filename):
     if filename.endswith('.pdf'):
-        return render_template('pdf_preview.html', file_url=f"/files/{filename}")
+        return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
     elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
-        return render_template('docx_preview.html', file_url=f"/files/{filename}")
+        return render_template('doc_preview.html', file_url=f"/preview/{filename}")
     else:
-        return "File type not supported", 400
-
-
+        return "File type not supported", 400    
+    
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
-    file_path = file_path.replace('preview/', '')  # Remove 'preview/' prefix from the path
-    log.debug(f"Preview: {file_path}")
-    return send_from_directory(BASE_DIR, file_path)
+    #file_name = os.path.basename(file_path)
+    file_dir, file_name = os.path.split(file_path)
+    file_dir = "/" + file_dir
+    #file_path = file_path.replace(BASE_DIR, '')  # Remove 'preview/' prefix from the path
+    log.debug(f"Preview:{file_dir}:{file_name}")
+    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
+        return send_from_directory(BASE_DIR + file_dir, file_name)
+    else:
+        log.error(f"Error file not found: {file_dir}/{file_name}")
+        abort(404, description="File not found")
+        
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
@@ -394,3 +401,4 @@ if __name__ == '__main__':
     WEB_PORT = 5000
     log.debug(F"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
+    
