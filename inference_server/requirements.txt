@@ -1,6 +1,6 @@
 flask
 transformers
-torch
+torch==1.13.1+cpu
 spacy
 sentencepiece
 
