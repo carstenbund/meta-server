@@ -1,7 +1,7 @@
-from flask import Flask, jsonify, request, Response, send_from_directory, g, abort
+from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy import Column, Integer, String, Float
 from flask_cors import CORS
@@ -21,7 +21,11 @@ log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
 
 # Database setup
 DATABASE_URI = 'sqlite:///instance/files.db'
-Base = declarative_base()
+
+# Define the base class
+class Base(DeclarativeBase):
+    pass
+
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 session = Session()
@@ -75,7 +79,7 @@ def process_scan_queue():
         with queue_lock:
             if scan_queue:
                 file_path = scan_queue.pop(0)
-                log.info("Queue processing: {file_ath}")
+                log.info("Queue processing: {file_path}")
                 scan_and_update_file(file_path)
         time.sleep(1)  # Adjust the sleep time as needed
 
@@ -194,11 +198,11 @@ def before_request():
 def page_not_found(e):
     # Access the stored endpoint
     endpoint = getattr(g, 'endpoint', 'Unknown')
-    full_path = getattr(g, 'endpoint', 'Unknown')
+    full_path = getattr(g, 'full_path', 'Unknown')
     log_message = (
         f"404 error at {request.url} - IP: {request.remote_addr} - "
-        f"Endpoint: {endpoint}"
-        f"full_path: {full_path}"
+        f"\nEndpoint: {endpoint}"
+        f"\nfull_path: {full_path}"
     )
     app.logger.info(log_message)
     return "<h2>Page not found</h2>", 404
@@ -363,17 +367,31 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
         abort(500, description="Internal Server Error")
 
 
-@app.route('/ViewerJS/index.html<path:file_path>', methods=['GET','HEAD', 'POST'])
-def viewjs(file_path):
-    preview_url = f"{file_path}"
-    log.debug(f"Preview  Url: {preview_url}")
-    return send_from_directory(STATIC_DIR, preview_url)
-
+@app.route('/doc_preview/<path:filename>')
+def preview(filename):
+    if filename.endswith('.pdf'):
+        return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
+    elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
+        return render_template('doc_preview.html', file_url=f"/preview/{filename}")
+    else:
+        return "File type not supported", 400    
+    
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
-    file_path = file_path.replace('preview/', '')  # Remove 'preview/' prefix from the path
-    log.debug(f"Preview: {file_path}")
-    return send_from_directory(BASE_DIR, file_path)
+    #file_name = os.path.basename(file_path)
+    file_dir, file_name = os.path.split(file_path)
+    file_dir = "/" + file_dir
+    file_dir = file_dir.replace(BASE_DIR, '')  # Remove base prefix from the path
+    log.debug(f"Preview:{file_dir}:{file_name}")
+    log.debug(f"Translated Preview:{file_dir}/{file_name}")
+    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
+        log.debug(f"Found, serve preview: {BASE_DIR}{file_dir}/{file_name}")
+        return send_from_directory(BASE_DIR + file_dir, file_name)
+    else:
+        log.debug(f"Serve preview not found: {BASE_DIR}{file_dir}/{file_name}")
+        log.error(f"Error file not found: {file_dir}/{file_name}")
+        abort(404, description="File not found")
+        
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
@@ -390,3 +408,4 @@ if __name__ == '__main__':
     WEB_PORT = 5000
     log.debug(F"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
+    

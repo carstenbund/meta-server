@@ -7,19 +7,20 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      font-size: 14px;
+      font-size: 12px;
       display: flex;
       height: 100vh;
       margin: 0;
+      background-color: #DDDDDD;
     }
     .file-list {
-      flex: 0 0 50%;
+      flex: 0 0 40%;
       overflow-y: auto;
-      padding: 20px;
+      padding: 10px;
       box-sizing: border-box;
     }
     .separator {
-      width: 5px;
+      width: 7px;
       background-color: #ccc;
       cursor: ew-resize;
       position: relative;
@@ -30,16 +31,19 @@
       border-bottom: 1px solid #ccc;
     }
     .file-item:hover {
-      background-color: #f0f0f0;
+      background-color: #D0D0D0;
     }
     .folder-item {
-      background-color: #e0e0e0; /* Slightly darker background for folders */
+      background-color: #BBBBBB; /* Slightly darker background for folders */
+    }
+    .section_title{
+      font-size: 14px;
     }
     .file-details {
       flex: 0 0 50%;
-      padding: 20px;
+      padding: 10px;
       display: block;
-      box-sizing: border-box;
+      .box-sizing: border-box;
     }
     .file-details div, .file-details pre {
       font-size: 12px;
@@ -47,171 +51,272 @@
       word-wrap: break-word;
     }
     .translate-button, .preview-button {
-      margin-top: 20px;
+      margin-top: 0px;
     }
     #translated-content, #preview-pane {
-      margin-top: 20px;
+      margin-top: 0px;
       white-space: pre-wrap;
     }
     .thumbnail {
       max-width: 200px;
       max-height: 200px;
-      margin-top: 20px;
+      margin-top: 10px;
       display: block;
     }
-    iframe#preview-pane {
+    .img_thumbnail {
+      max-width: 600px;
+      max-height: 600px;
+      margin-top: 10px;
+      display: block;
+    }
+    .content{
+      background-color: #FDFDEA;
+    }
+    
+    #preview-pane {
       width: 100%;
-      height: 400px;
+      height: 600px;
       border: none;
       display: none;
     }
+    
   </style>
+  
+  <style> 
+    .metadata-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+    background-color: #D5DADF;
+    padding: 5px;
+  }
+    
+    .metadata-grid .label {
+      font-weight: bold;
+      text-align: left;
+      padding-right: 5px;
+    }
+    .metadata-grid .content {
+      text-align: left;
+    }
+    
+    .metadata-grid .full-width {
+      grid-column: 1 / 5;
+    }
+    
+    .metadata-grid .category {
+      grid-column: 3 / 4;
+      grid-row: 1;
+    }
+    
+    .metadata-grid .category + .content {
+      grid-column: 4 / 5;
+      grid-row: 1;
+    }
+    
+    
+    .metadata-grid .path {
+      grid-column: 1 / 2;
+      grid-row: 2;
+    }
+    
+    .metadata-grid .path + .content {
+      grid-column: 2 / 5;
+      grid-row: 2;
+    }
+    
+    .metadata-grid .size {
+      grid-column: 3 / 4;
+      grid-row: 3;
+    }
+    
+    .metadata-grid .size + .content {
+      grid-column: 4 / 5;
+      grid-row: 3;
+    }
+
+  
+  
+    /* Example for full-width field */
+    .metadata-grid .summary {
+      grid-column: 1 / 2;
+      grid-row: 4;
+    }
+    
+    .metadata-grid .summary + .content {
+      grid-column: 2 / 5;
+      grid-row: 4;
+    }
+    
+    /* Example for full-width field */
+    .metadata-grid .keywords {
+      grid-column: 1 / 2;
+      grid-row: 5;
+    }
+    
+    .metadata-grid .keywords + .content {
+      grid-column: 2 / 5;
+      grid-row: 5;
+    }
+    
+</style>
 </head>
 <body>
   <div class="file-list" id="file-list"></div>
   <div class="separator" id="separator"></div>
   <div class="file-details" id="file-details">
 
-<div class="file-details" id="file-details">
-    <h2>Metadata</h2>
-    <div><strong>Path:</strong> <span id="path"></span></div>
-    <div><strong>Size:</strong> <span id="size"></span></div>
-    <div><strong>Size:</strong> <span id="file_count"></span></div>
-    <div><strong>Modification Date:</strong> <span id="modification_date"></span></div>
-    <div><strong>Category:</strong> <span id="category"></span></div>
-    <div><strong>Keywords:</strong> <span id="keywords"></span></div>
-    <div><strong>Summary:</strong> <span id="summary"></span></div>
-    <div><strong>File Type:</strong> <span id="file_type"></span></div>
-    <div><strong>Creator Software:</strong> <span id="creator_software"></span></div>
-    <div><strong>Origin Date:</strong> <span id="origin_date"></span></div>
-    <div><strong>PE Info:</strong> <span id="pe_info"></span></div>
-    <img id="thumbnail" class="thumbnail" src="" alt="File thumbnail" style="display:none;">
-    <div class="translate-button">
-      <button id="translate-button">Translate to Japanese</button>
+    <div class="file-details" id="file-details">
+      <span class="section-title">Metadata</span>
+      <div class="metadata-grid">
+          <div class="label category">Category:</div><div class="content"><span id="category"></span></div>
+          <div class="label path full-width">Path:</div><div class="content"><span id="path"></span></div>
+          <div class="label size">Size:</div><div class="content"><span id="size"></span></div>
+          <div class="label origin-date">Origin Date:</div><div class="content"><span id="origin_date"></span></div>
+          <div class="label file-count">File Count:</div><div class="content"><span id="file_count"></span></div>
+          <div class="label modification-date">Modification Date:</div><div class="content"><span id="modification_date"></span></div>
+          <div class="label keywords">Keywords:</div><div class="content"><span id="keywords"></span></div>
+          <div class="label summary full-width">Summary:</div><div class="content full-width"><span id="summary"></span></div>
+          <div class="label file-type">File Type:</div><div class="content"><span id="file_type"></span></div>
+          <div class="label creator-software">Creator Software:</div><div class="content"><span id="creator_software"></span></div>
+          <div class="label pe-info" style="display:none;">PE Info:</div><div class="content"><span id="pe_info"></span></div>
+          <p><div class="thumbnail full-with"><a href="javascript: void(0)" id="thumblink" target="_blank"><img id="thumbnail" class="thumbnail" src="" alt="File thumbnail" style="display:none;"></a></div></p>
+        <div class="translate-button">
+          <button id="translate-button">Translate to Japanese</button>
+          <button id="preview-button">Preview</button>
+        </div>
+      </div>
+        <span class="section-title">Content</span>
+        <pre id="content"></pre>
+        <span class="section-title">Translated Content</span>
+        <pre id="translated-content"></pre>
+        <iframe id="preview-pane" width="100%"></iframe>
     </div>
-    <div class="preview-button">
-      <button id="preview-button">Preview</button>
-    </div>
-    <h2>Content</h2>
-    <pre id="content"></pre>
-    <h2>Translated Content</h2>
-    <pre id="translated-content"></pre>
-    <iframe id="preview-pane"></iframe>
-</div>
-
-<script>
-    document.addEventListener("DOMContentLoaded", function() {
-        let currentDirectory = '/';  // Root directory
-        let currentFilePath = '';    // Store the current file path
-        let directoryData = [];      // Store directory data
-        loadDirectory(currentDirectory);
-
-        function loadDirectory(directory) {
-            fetch(`/files?directory=${encodeURIComponent(directory)}`)
-                .then(response => response.json())
-                .then(data => {
-                    directoryData = data;  // Store the directory data
-                    const fileList = document.getElementById('file-list');
-                    fileList.innerHTML = '';  // Clear previous entries
-
-                    // Add navigation to parent directory if not root
-                    if (directory !== '/') {
-                        const parentDir = directory.split('/').slice(0, -1).join('/') || '/';
-                        const parentItem = document.createElement('div');
-                        parentItem.className = 'file-item folder-item';
-                        parentItem.textContent = '..';
-                        parentItem.addEventListener('click', () => loadDirectory(parentDir));
-                        fileList.appendChild(parentItem);
-                    }
-
-                    data.forEach(file => {
-                        const fileItem = document.createElement('div');
-                        fileItem.className = 'file-item' + (file.is_directory ? ' folder-item' : '');
-                        fileItem.textContent = file.path;
-                        fileItem.addEventListener('click', () => {
-                            if (file.is_directory) {
-                                loadDirectory(file.path);
-                                displayMetadata(file.metadata, null, true);  // Display metadata for directories
-                            } else {
-                                loadFileDetails(file.path);
-                            }
-                        });
-                        fileList.appendChild(fileItem);
-                    });
-                })
-                .catch(error => console.error('Error loading directory:', error));
-        }
-
-        function loadFileDetails(filePath) {
-            currentFilePath = filePath;  // Set the current file path
-            fetch(`/files/${encodeURIComponent(filePath)}`)
-                .then(response => response.json())
-                .then(data => {
-                    displayMetadata(data.metadata, data.content);
-                })
-                .catch(error => console.error('Error fetching file details:', error));
-        }
-
-        function displayMetadata(metadata, content = null, isDirectory = false) {
-            if (!metadata) {
-                console.error('No metadata found.');
-                return;
-            }
-
-            // Update HTML elements with metadata
-            document.getElementById('path').textContent = metadata.path || 'N/A';
-            document.getElementById('size').textContent = metadata.size || 'N/A';
-            document.getElementById('modification_date').textContent = metadata.modification_date
-                ? new Date(metadata.modification_date * 1000).toLocaleString()
-                : 'N/A';
-            document.getElementById('category').textContent = metadata.category || 'N/A';
-            document.getElementById('keywords').textContent = metadata.keywords || 'N/A';
-            document.getElementById('summary').textContent = metadata.summary || 'N/A';
-            document.getElementById('file_type').textContent = metadata.file_type || 'N/A';
-            document.getElementById('creator_software').textContent = metadata.creator_software || 'N/A';
-            document.getElementById('origin_date').textContent = metadata.origin_date
-                ? new Date(metadata.origin_date * 1000).toLocaleString()
-                : 'N/A';
-            document.getElementById('pe_info').textContent = metadata.pe_info || 'N/A';
-            document.getElementById('file_count').textContent = isDirectory ? metadata.file_count || 'N/A' : 'N/A';
-            document.getElementById('content').textContent = content || 'N/A';
-            document.getElementById('translated-content').textContent = '';  // Clear previous translation
-            document.getElementById('translate-button').onclick = () => translateContent(content);
-
-            const thumbnail = document.getElementById('thumbnail');
-            if (metadata.path && metadata.path.match(/\.(jpeg|jpg|JPG|gif|png)$/)) {
-                thumbnail.src = `/thumbnails${encodeURIComponent(metadata.path)}`;
-                thumbnail.style.display = 'block';
-            } else {
-                thumbnail.src = getIconForFileType(metadata.path);
-                thumbnail.style.display = 'block';
-            }
-
-            document.getElementById('file-details').style.display = 'block';
-            document.getElementById('preview-pane').style.display = 'none'; // Hide preview pane initially
-        }
-
-
-        // Helper function to get icon for file type
-        function getIconForFileType(filePath) {
-            const ext = filePath.split('.').pop().toLowerCase();
-            switch (ext) {
-                case 'pdf':
-                    return '/static/icons/pdf_icon.png';
-                case 'doc':
-                case 'docx':
-                    return '/static/icons/doc_icon.png';
-                case 'xls':
-                case 'xlsx':
-                    return '/static/icons/xls_icon.png';
-                case 'txt':
-                    return '/static/icons/file_icon.png';
-                default:
-                    return '/static/icons/file_icon.png';
-            }
-        }
+  </div>
+  
+  <script>
+    Array.prototype.contains = function(element){
+      return this.indexOf(element) > -1;
+    };
     
-
+    document.addEventListener("DOMContentLoaded", function() {
+      let currentDirectory = '/';  // Root directory
+      let currentFilePath = '';    // Store the current file path
+      let directoryData = [];      // Store directory data
+      loadDirectory(currentDirectory);
+      
+      function loadDirectory(directory) {
+        fetch(`/files?directory=${encodeURIComponent(directory)}`)
+        .then(response => response.json())
+        .then(data => {
+          directoryData = data;  // Store the directory data
+          const fileList = document.getElementById('file-list');
+          fileList.innerHTML = '';  // Clear previous entries
+          
+          // Add navigation to parent directory if not root
+          if (directory !== '/') {
+            const parentDir = directory.split('/').slice(0, -1).join('/') || '/';
+            const parentItem = document.createElement('div');
+            parentItem.className = 'file-item folder-item';
+            parentItem.textContent = '..';
+            parentItem.addEventListener('click', () => loadDirectory(parentDir));
+            fileList.appendChild(parentItem);
+          }
+          
+          data.forEach(file => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item' + (file.is_directory ? ' folder-item' : '');
+            fileItem.textContent = file.path;
+            fileItem.addEventListener('click', () => {
+              if (file.is_directory) {
+                loadDirectory(file.path);
+                displayMetadata(file.metadata, null, true);  // Display metadata for directories
+              } else {
+                loadFileDetails(file.path);
+              }
+            });
+            fileList.appendChild(fileItem);
+          });
+        })
+        .catch(error => console.error('Error loading directory:', error));
+      }
+      
+      function loadFileDetails(filePath) {
+        currentFilePath = filePath;  // Set the current file path
+        fetch(`/files/${encodeURIComponent(filePath)}`)
+        .then(response => response.json())
+        .then(data => {
+          displayMetadata(data.metadata, data.content);
+        })
+        .catch(error => console.error('Error fetching file details:', error));
+      }
+      
+      function displayMetadata(metadata, content = null, isDirectory = false) {
+        if (!metadata) {
+          console.error('No metadata found.');
+          return;
+        }
+        
+        // Update HTML elements with metadata
+        document.getElementById('path').textContent = metadata.path || 'N/A';
+        document.getElementById('size').textContent = metadata.size || 'N/A';
+        document.getElementById('modification_date').textContent = metadata.modification_date
+        ? new Date(metadata.modification_date * 1000).toLocaleString()
+        : 'N/A';
+        document.getElementById('category').textContent = metadata.category || 'N/A';
+        document.getElementById('keywords').textContent = metadata.keywords || 'N/A';
+        document.getElementById('summary').textContent = metadata.summary || 'N/A';
+        document.getElementById('file_type').textContent = metadata.file_type || 'N/A';
+        document.getElementById('creator_software').textContent = metadata.creator_software || 'N/A';
+        document.getElementById('origin_date').textContent = metadata.origin_date
+        ? new Date(metadata.origin_date * 1000).toLocaleString()
+        : 'N/A';
+        document.getElementById('pe_info').textContent = metadata.pe_info || 'N/A';
+        document.getElementById('file_count').textContent = isDirectory ? metadata.file_count || 'N/A' : 'N/A';
+        document.getElementById('content').textContent = content || 'N/A';
+        document.getElementById('translated-content').textContent = '';  // Clear previous translation
+        document.getElementById('translate-button').onclick = () => translateContent(content);
+        
+        const thumbnail = document.getElementById('thumbnail');
+        if (metadata.path && metadata.path.match(/\.(jpeg|jpg|JPG|gif|png|PNG)$/)) {
+          //console.log(thumbnail.parentElement)
+          thumbnail.parentElement.href="/preview" + metadata.path;
+          thumbnail.src = `/thumbnails${encodeURIComponent(metadata.path)}`;
+          thumbnail.style.display = 'block';
+          thumbnail.className = 'img_thumbnail';
+        } else {
+          thumbnail.src = getIconForFileType(metadata.path);
+          thumbnail.style.display = 'block';
+          thumbnail.parentElement.href="javascript: void(0)";
+          thumbnail.className = 'thumbnail';
+        }
+        
+        document.getElementById('file-details').style.display = 'block';
+        document.getElementById('preview-pane').style.display = 'none'; // Hide preview pane initially
+      }
+      
+      
+      // Helper function to get icon for file type
+      function getIconForFileType(filePath) {
+        const ext = filePath.split('.').pop().toLowerCase();
+        switch (ext) {
+          case 'pdf':
+            return '/static/icons/pdf_icon.png';
+          case 'doc':
+          case 'docx':
+            return '/static/icons/doc_icon.png';
+          case 'xls':
+          case 'xlsx':
+            return '/static/icons/xls_icon.png';
+          case 'txt':
+            return '/static/icons/file_icon.png';
+          default:
+            return '/static/icons/file_icon.png';
+        }
+      }
+      
+      
       function translateContent(content) {
         fetch('/translate', {
           method: 'POST',
@@ -225,35 +330,40 @@
           document.getElementById('translated-content').textContent = data.translated_text || 'Translation failed';
         });
       }
-
+      
       document.getElementById('preview-button').addEventListener('click', () => {
-        const previewPane = document.getElementById('preview-pane');
-        const previewUrl = `/ViewerJS/index.html#${encodeURIComponent(`/preview/${currentFilePath}`)}`;
-	console.log('Preview Url:', previewUrl);
-        previewPane.src = previewUrl;
-        previewPane.style.display = 'block';
+        filePath = `${currentFilePath}`
+        const ext = filePath.split('.').pop().toLowerCase();
+        if (["docx", "doc", "pdf"].contains(ext)){
+          const previewPane = document.getElementById('preview-pane');
+          const previewUrl = `/doc_preview/${encodeURIComponent(`${currentFilePath}`)}`;
+          console.log('Preview Url:', previewUrl);
+          previewPane.src = previewUrl;
+          previewPane.style.display = 'block';}
+        else
+          return 0;
       });
-
+      
       // Draggable separator
       const separator = document.getElementById('separator');
       let isDragging = false;
-
+      
       separator.addEventListener('mousedown', function(e) {
         isDragging = true;
         document.body.style.cursor = 'ew-resize';
       });
-
+      
       document.addEventListener('mousemove', function(e) {
         if (isDragging) {
           const offsetRight = document.body.offsetWidth - (e.clientX - document.body.offsetLeft);
           const fileList = document.getElementById('file-list');
           const fileDetails = document.getElementById('file-details');
-
+          
           fileList.style.flex = '0 0 ' + (e.clientX - document.body.offsetLeft) + 'px';
           fileDetails.style.flex = '1';
         }
       });
-
+      
       document.addEventListener('mouseup', function() {
         if (isDragging) {
           isDragging = false;
@@ -265,3 +375,4 @@
 </body>
 </html>
 
+      

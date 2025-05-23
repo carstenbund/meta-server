@@ -1,13 +1,18 @@
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm.exc import NoResultFound
 
 
 # Database setup
 DATABASE_URI = 'sqlite:///instance/files.db'
-Base = declarative_base()
+
+# Define the base class
+class Base(DeclarativeBase):
+    pass
+
+#Base = declarative_base()
 engine = create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 session = Session()
