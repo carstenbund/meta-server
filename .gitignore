@@ -5,3 +5,5 @@ debug
 thumbnails
 static/ViewerJS
 static/index-*
+
+._*

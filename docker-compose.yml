@@ -1,0 +1,40 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+
+  scanner:
+    build: ./scanner
+    container_name: scanner
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+    depends_on:
+      - llm_inference
+    restart: unless-stopped
+
+  indexer:
+    build: ./indexer
+    container_name: indexer
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+    depends_on:
+      - llm_inference
+    restart: unless-stopped
+
+  llm_inference:
+    build: ./llm_inference_server
+    container_name: llm_inference_server
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./common:/app/common
+    restart: unless-stopped
+
+volumes:
+  shared_data:
+

@@ -1,3 +1,13 @@
+<<<<<<< Updated upstream
+=======
+from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm.exc import NoResultFound
+from sqlalchemy import Column, Integer, String, Float
+from flask_cors import CORS
+>>>>>>> Stashed changes
 import os
 import threading
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
@@ -20,7 +30,11 @@ log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
 
 # Database setup
 DATABASE_URI = 'sqlite:///instance/files.db'
-Base = declarative_base()
+
+# Define the base class
+class Base(DeclarativeBase):
+    pass
+
 engine = create_engine(DATABASE_URI)
 SessionLocal = scoped_session(sessionmaker(bind=engine))
 
@@ -77,7 +91,11 @@ def process_scan_queue():
         with queue_lock:
             if scan_queue:
                 file_path = scan_queue.pop(0)
+<<<<<<< Updated upstream
                 log.info(f"Queue processing: {file_path}")
+=======
+                log.info("Queue processing: {file_path}")
+>>>>>>> Stashed changes
                 scan_and_update_file(file_path)
         time.sleep(1)  # Adjust the sleep time as needed
 
@@ -196,11 +214,11 @@ def before_request():
 def page_not_found(e):
     # Access the stored endpoint
     endpoint = getattr(g, 'endpoint', 'Unknown')
-    full_path = getattr(g, 'endpoint', 'Unknown')
+    full_path = getattr(g, 'full_path', 'Unknown')
     log_message = (
         f"404 error at {request.url} - IP: {request.remote_addr} - "
-        f"Endpoint: {endpoint}"
-        f"full_path: {full_path}"
+        f"\nEndpoint: {endpoint}"
+        f"\nfull_path: {full_path}"
     )
     app.logger.info(log_message)
     return "<h2>Page not found</h2>", 404
@@ -376,7 +394,11 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
 def preview(filename):
     if filename.endswith('.pdf'):
         return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
+<<<<<<< Updated upstream
     elif filename.endswith('.docx') or filename.lower().endswith('.doc'):
+=======
+    elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
+>>>>>>> Stashed changes
         return render_template('doc_preview.html', file_url=f"/preview/{filename}")
     else:
         return "File type not supported", 400    
@@ -386,11 +408,22 @@ def preview_file(file_path):
     #file_name = os.path.basename(file_path)
     file_dir, file_name = os.path.split(file_path)
     file_dir = "/" + file_dir
+<<<<<<< Updated upstream
     #file_path = file_path.replace(BASE_DIR, '')  # Remove 'preview/' prefix from the path
     log.debug(f"Preview:{file_dir}:{file_name}")
     if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
         return send_from_directory(BASE_DIR + file_dir, file_name)
     else:
+=======
+    file_dir = file_dir.replace(BASE_DIR, '')  # Remove base prefix from the path
+    log.debug(f"Preview:{file_dir}:{file_name}")
+    log.debug(f"Translated Preview:{file_dir}/{file_name}")
+    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
+        log.debug(f"Found, serve preview: {BASE_DIR}{file_dir}/{file_name}")
+        return send_from_directory(BASE_DIR + file_dir, file_name)
+    else:
+        log.debug(f"Serve preview not found: {BASE_DIR}{file_dir}/{file_name}")
+>>>>>>> Stashed changes
         log.error(f"Error file not found: {file_dir}/{file_name}")
         abort(404, description="File not found")
         
@@ -410,3 +443,4 @@ if __name__ == '__main__':
     WEB_PORT = 5000
     log.debug(F"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
+    
