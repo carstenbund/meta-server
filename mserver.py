@@ -72,7 +72,7 @@ def process_scan_queue():
         with queue_lock:
             if scan_queue:
                 file_path = scan_queue.pop(0)
-                log.info("Queue processing: {file_path}")
+                log.info(f"Queue processing: {file_path}")
                 scan_and_update_file(file_path)
         time.sleep(1)  # Adjust the sleep time as needed
 
