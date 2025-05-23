@@ -1,12 +1,6 @@
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy import Column, Integer, String, Float
-from flask_cors import CORS
-import os
-import threading
+from sqlalchemy.orm import scoped_session, sessionmaker
 import time
 import requests  
 import pefile
@@ -23,8 +17,7 @@ log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
 DATABASE_URI = 'sqlite:///instance/files.db'
 Base = declarative_base()
 engine = create_engine(DATABASE_URI)
-Session = sessionmaker(bind=engine)
-session = Session()
+SessionLocal = scoped_session(sessionmaker(bind=engine))
 
 # Define the FileMetadata model
 class FileMetadata(Base):
@@ -63,6 +56,10 @@ Base.metadata.create_all(engine)
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
+@app.teardown_appcontext
+def remove_session(exception=None):
+    SessionLocal.remove()
+
 # Initialize a queue for files to be scanned
 scan_queue = []
 
@@ -75,7 +72,7 @@ def process_scan_queue():
         with queue_lock:
             if scan_queue:
                 file_path = scan_queue.pop(0)
-                log.info("Queue processing: {file_ath}")
+                log.info("Queue processing: {file_path}")
                 scan_and_update_file(file_path)
         time.sleep(1)  # Adjust the sleep time as needed
 
@@ -122,7 +119,7 @@ def get_pe_info(file_path):
 
 # Function to scan and update a single file
 def scan_and_update_file(file_path):
-    session = Session()
+    session = SessionLocal()
     content = ""
     inferred_category = None
     keywords = None
@@ -205,6 +202,7 @@ def page_not_found(e):
 
 @app.route('/files', methods=['GET'])
 def list_files():
+    session = SessionLocal()
     relative_directory = request.args.get('directory', '/')
     directory = os.path.join(BASE_DIR, relative_directory.lstrip('/'))
     files = []
@@ -247,7 +245,9 @@ def list_files():
 
     # Sort folders first, then files, both alphabetically
     files.sort(key=lambda x: (not x['is_directory'], x['path'].lower()))
-    return jsonify(files)
+    response = jsonify(files)
+    session.close()
+    return response
 
 # Endpoint to list files in a directory
 #@app.route('/files', methods=['GET'])
@@ -273,6 +273,7 @@ def list_files_old():
 # Endpoint to get file details and content
 @app.route('/files/<path:file_id>', methods=['GET'])
 def get_file(file_id):
+    session = SessionLocal()
     file_path = os.path.join(BASE_DIR, file_id.lstrip('/'))
     file = session.query(FileMetadata).filter_by(path=file_path).first()
 
@@ -292,11 +293,14 @@ def get_file(file_id):
             'pe_info': file.pe_info,
             'file_count': 0  # Not applicable for files
         }
-        return jsonify({'metadata': metadata, 'content': file.content})
+        response = jsonify({'metadata': metadata, 'content': file.content})
+        session.close()
+        return response
     else:
         with queue_lock:
             scan_queue.append(file_path)
         log.info(f"/files/ not found: {file_path}")
+        session.close()
         return jsonify({'error': 'File not found'}), 404
 
 
@@ -367,7 +371,7 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
 def preview(filename):
     if filename.endswith('.pdf'):
         return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
-    elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
+    elif filename.endswith('.docx') or filename.lower().endswith('.doc'):
         return render_template('doc_preview.html', file_url=f"/preview/{filename}")
     else:
         return "File type not supported", 400    
@@ -401,4 +405,3 @@ if __name__ == '__main__':
     WEB_PORT = 5000
     log.debug(F"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
-    

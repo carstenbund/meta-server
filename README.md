@@ -115,6 +115,3 @@ Open your web browser and navigate to `http://localhost:5000` to browse and view
 ## License
 
 This project is licensed under the MIT License.
-```
-
-This `README.md` file provides a clear introduction and instructions for setting up and using the project, while excluding the actual file content which can be found in the GitHub repository.
