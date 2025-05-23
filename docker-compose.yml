@@ -35,6 +35,21 @@ services:
       - ./common:/app/common
     restart: unless-stopped
 
+  server:
+    build: ./server
+    container_name: server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+      - ./static:/app/static
+      - ./templates:/app/templates
+    depends_on:
+      - llm_inference
+    restart: unless-stopped
+
 volumes:
   shared_data:
 
