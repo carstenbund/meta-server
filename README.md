@@ -30,12 +30,6 @@ Ensure the following are installed:
 
 ## Usage
 
-### Run the Tika Server
-Start the Apache Tika server used for text extraction:
-```sh
-java -jar /path/to/tika-server.jar
-```
-
 ### Launch the Services
 Use docker-compose to start the scanner, indexer, inference server and web application:
 ```sh
