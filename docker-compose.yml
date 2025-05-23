@@ -12,7 +12,7 @@ services:
       - ./instance:/instance
       - ./common:/app/common
     depends_on:
-      - llm_inference
+      - inference
     restart: unless-stopped
 
   indexer:
@@ -23,12 +23,12 @@ services:
       - ./instance:/instance
       - ./common:/app/common
     depends_on:
-      - llm_inference
+      - inference
     restart: unless-stopped
 
-  llm_inference:
+  inference:
     build: ./inference_server
-    container_name:inference_server
+    container_name: inference_server
     ports:
       - "5001:5001"
     volumes:
@@ -47,7 +47,7 @@ services:
       - ./static:/app/static
       - ./templates:/app/templates
     depends_on:
-      - llm_inference
+      - inference
     restart: unless-stopped
 
 volumes:
