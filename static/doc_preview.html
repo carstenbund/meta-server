@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DOC Preview</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #f0f0f0;
+    }
+    #docx-content {
+      width: 80%;
+      height: 80%;
+      background-color: white;
+      padding: 20px;
+      overflow-y: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+  <div id="docx-content"></div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+  <script>
+    const fileUrl = "{{ file_url }}";
+
+    fetch(fileUrl)
+      .then(response => response.arrayBuffer())
+      .then(arrayBuffer => mammoth.convertToHtml({arrayBuffer: arrayBuffer}))
+      .then(result => {
+        document.getElementById('docx-content').innerHTML = result.value;
+      })
+      .catch(err => console.error(err));
+  </script>
+</body>
+</html>

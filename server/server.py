@@ -1,33 +1,26 @@
 import os
-import time
 import threading
-import requests
-import pefile
-import magic
-import logging
-
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
 from flask_cors import CORS
 from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.orm.exc import NoResultFound
+import time
+import requests
+import pefile
+import magic
 from tika import parser
 from langdetect import detect
-
+import logging
 from MyLogger import Logger
-
 
 # Create a logger instance
 log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
 
 # Database setup
 DATABASE_URI = 'sqlite:///instance/files.db'
-
-# Define the base class
-class Base(DeclarativeBase):
-    pass
-
+Base = declarative_base()
 engine = create_engine(DATABASE_URI)
 SessionLocal = scoped_session(sessionmaker(bind=engine))
 
@@ -62,7 +55,6 @@ class DirectoryMetadata(Base):
 
 # Ensure database tables are created
 Base.metadata.create_all(engine)
-
 
 # Initialize Flask app
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -137,7 +129,7 @@ def scan_and_update_file(file_path):
     keywords = None
     summary = None
     origin_date = str(os.path.getmtime(file_path))
-    
+
     mime_type, file_type, creator_software = detect_file_type(file_path)
     size = os.path.getsize(file_path)
     modification_date = os.path.getmtime(file_path)
@@ -154,7 +146,7 @@ def scan_and_update_file(file_path):
         parsed = parser.from_file(file_path)
         content = parsed.get('content', '') if parsed else ''
         source_lang = detect(content) if content else 'unknown'
-        
+
         payload = {
             'file_path': file_path,
             'content': content[:500],
@@ -224,7 +216,7 @@ def list_files():
             continue
         file_path = os.path.join(directory, entry.name)
         relative_path = os.path.relpath(file_path, BASE_DIR)
-        
+
         # Check if metadata exists in the database
         metadata = None
         try:
@@ -261,27 +253,6 @@ def list_files():
     session.close()
     return response
 
-# Endpoint to list files in a directory
-#@app.route('/files', methods=['GET'])
-def list_files_old():
-    relative_directory = request.args.get('directory', '/')
-    directory = os.path.join(BASE_DIR, relative_directory.lstrip('/'))
-    files = []
-    file_list = os.scandir(directory)
-    for entry in file_list:
-        if entry.name.startswith('.'):
-            continue
-        file_path = os.path.join(directory, entry.name)
-        relative_path = os.path.relpath(file_path, BASE_DIR)
-        files.append({
-            'path': relative_path,
-            'is_directory': entry.is_dir(),
-            'id': entry.name if entry.is_file() else None
-        })
-    # Sort folders first, then files, both alphabetically
-    files.sort(key=lambda x: (not x['is_directory'], x['path'].lower()))
-    return jsonify(files)
-
 # Endpoint to get file details and content
 @app.route('/files/<path:file_id>', methods=['GET'])
 def get_file(file_id):
@@ -314,7 +285,6 @@ def get_file(file_id):
         log.info(f"/files/ not found: {file_path}")
         session.close()
         return jsonify({'error': 'File not found'}), 404
-
 
 # Route to serve the HTML file
 @app.route('/')
@@ -378,44 +348,37 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
         log.error(f"Error sending file: {file_path}, error: {str(e)}")
         abort(500, description="Internal Server Error")
 
-
 @app.route('/doc_preview/<path:filename>')
 def preview(filename):
     if filename.endswith('.pdf'):
         return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
-    elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
+    elif filename.endswith('.docx') or filename.lower().endswith('.doc'):
         return render_template('doc_preview.html', file_url=f"/preview/{filename}")
     else:
-        return "File type not supported", 400    
-    
+        return "File type not supported", 400
+
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
     file_dir, file_name = os.path.split(file_path)
-    full_path = os.path.join(BASE_DIR, file_dir, file_name)
-
-    log.debug(f"Preview: {file_dir}:{file_name}")
-    log.debug(f"Full preview path: {full_path}")
-
-    if os.path.exists(full_path):
-        return send_from_directory(os.path.join(BASE_DIR, file_dir), file_name)
+    file_dir = "/" + file_dir
+    log.debug(f"Preview:{file_dir}:{file_name}")
+    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
+        return send_from_directory(BASE_DIR + file_dir, file_name)
     else:
-        log.error(f"Preview file not found: {full_path}")
+        log.error(f"Error file not found: {file_dir}/{file_name}")
         abort(404, description="File not found")
-        
 
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
-# Set the base directory
 
-
-BASE_DIR = '/win95/mcrlnsalg'
-STATIC_DIR = '/var/server/data/meta-server/static'
-THUMBNAILS_DIR = '/var/server/data/meta-server/thumbnails'
+# Configuration directories
+BASE_DIR = os.environ.get('BASE_DIR', '/win95/mcrlnsalg')
+STATIC_DIR = os.environ.get('STATIC_DIR', '/var/server/data/meta-server/static')
+THUMBNAILS_DIR = os.environ.get('THUMBNAILS_DIR', '/var/server/data/meta-server/thumbnails')
 
 if __name__ == '__main__':
-    WEB_IP = '0.0.0.0'
-    WEB_PORT = 5000
-    log.debug(F"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
+    WEB_IP = os.environ.get('WEB_IP', '0.0.0.0')
+    WEB_PORT = int(os.environ.get('WEB_PORT', '5000'))
+    log.debug(f"port={WEB_PORT}, host={WEB_IP}, debug=True, use_reloader=False")
     app.run(port=WEB_PORT, host=WEB_IP, debug=True, use_reloader=False)
-    

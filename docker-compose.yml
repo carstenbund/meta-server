@@ -1,0 +1,55 @@
+# docker-compose.yml
+
+version: '3.8'
+
+services:
+
+  scanner:
+    build: ./scanner
+    container_name: scanner
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+    depends_on:
+      - inference
+    restart: unless-stopped
+
+  indexer:
+    build: ./indexer
+    container_name: indexer
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+    depends_on:
+      - inference
+    restart: unless-stopped
+
+  inference:
+    build: ./inference_server
+    container_name: inference_server
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./common:/app/common
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    container_name: server
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./shared_data:/data
+      - ./instance:/instance
+      - ./common:/app/common
+      - ./static:/app/static
+      - ./templates:/app/templates
+    depends_on:
+      - inference
+    restart: unless-stopped
+
+volumes:
+  shared_data:
+

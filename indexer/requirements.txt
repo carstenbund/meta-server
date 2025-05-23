@@ -1,0 +1,7 @@
+sqlalchemy
+requests
+python-magic
+tika
+langdetect
+pefile
+

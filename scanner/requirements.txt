@@ -1,0 +1,7 @@
+sqlalchemy
+flask
+requests
+python-magic
+tika
+langdetect
+
