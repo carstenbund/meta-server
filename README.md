@@ -15,7 +15,6 @@ Ensure the following are installed:
 
 - Docker
 - Docker Compose
-- Java (for the Apache Tika server)
 - Python 3.8+ (optional for running scripts directly)
 
 ### Setup
