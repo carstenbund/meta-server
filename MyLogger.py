@@ -43,11 +43,6 @@ class Logger:
 
         return logger
 
-    def _setup_exit_trap(self):
-        # Ensure that the logger will be cleaned up on exit
-        import atexit
-        atexit.register(self._cleanup_logger)
-
     def _cleanup_logger(self):
         handlers = self.logger.handlers[:]
         for handler in handlers:
@@ -114,4 +109,3 @@ if __name__ == "__main__":
         local_var2 = 42
         raise ValueError("This is a test exception with local variables")
 
-    test_function()

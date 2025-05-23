@@ -124,7 +124,6 @@ def scan_directory(directory):
                 log.debug(f"Extracted PE info: {content}")
             elif file_extension in ['.pdf', '.doc', '.docx']:
                 log.debug(f"skipping {file_path}")
-                continue
                 log.debug(f"Tika parsing {file_path}")
                 parsed = parser.from_file(file_path)
                 inferred_category = 'Document'
