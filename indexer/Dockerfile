@@ -14,8 +14,8 @@ RUN apt-get update && \
         langdetect \
         pefile
 
-COPY index_worker.py .
+COPY index_service.py .
 COPY ../MyLogger.py .
 
-CMD ["python", "index_worker.py"]
+CMD ["python", "index_service.py"]
 
