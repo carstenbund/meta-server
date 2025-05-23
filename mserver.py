@@ -1,29 +1,22 @@
-<<<<<<< Updated upstream
-=======
-from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm.exc import NoResultFound
-from sqlalchemy import Column, Integer, String, Float
-from flask_cors import CORS
->>>>>>> Stashed changes
 import os
+import time
 import threading
+import requests
+import pefile
+import magic
+import logging
+
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
 from flask_cors import CORS
 from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.orm.exc import NoResultFound
-import time
-import requests  
-import pefile
-import magic
 from tika import parser
 from langdetect import detect
-import logging
+
 from MyLogger import Logger
+
 
 # Create a logger instance
 log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
@@ -91,11 +84,7 @@ def process_scan_queue():
         with queue_lock:
             if scan_queue:
                 file_path = scan_queue.pop(0)
-<<<<<<< Updated upstream
                 log.info(f"Queue processing: {file_path}")
-=======
-                log.info("Queue processing: {file_path}")
->>>>>>> Stashed changes
                 scan_and_update_file(file_path)
         time.sleep(1)  # Adjust the sleep time as needed
 
@@ -394,37 +383,23 @@ def send_thumbnail_with_correct_header(file_path, mimetype):
 def preview(filename):
     if filename.endswith('.pdf'):
         return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
-<<<<<<< Updated upstream
-    elif filename.endswith('.docx') or filename.lower().endswith('.doc'):
-=======
     elif filename.endswith('.docx') or file_path.lower().endswith('.doc'):
->>>>>>> Stashed changes
         return render_template('doc_preview.html', file_url=f"/preview/{filename}")
     else:
         return "File type not supported", 400    
     
 @app.route('/preview/<path:file_path>', methods=['GET', 'HEAD'])
 def preview_file(file_path):
-    #file_name = os.path.basename(file_path)
     file_dir, file_name = os.path.split(file_path)
-    file_dir = "/" + file_dir
-<<<<<<< Updated upstream
-    #file_path = file_path.replace(BASE_DIR, '')  # Remove 'preview/' prefix from the path
-    log.debug(f"Preview:{file_dir}:{file_name}")
-    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
-        return send_from_directory(BASE_DIR + file_dir, file_name)
+    full_path = os.path.join(BASE_DIR, file_dir, file_name)
+
+    log.debug(f"Preview: {file_dir}:{file_name}")
+    log.debug(f"Full preview path: {full_path}")
+
+    if os.path.exists(full_path):
+        return send_from_directory(os.path.join(BASE_DIR, file_dir), file_name)
     else:
-=======
-    file_dir = file_dir.replace(BASE_DIR, '')  # Remove base prefix from the path
-    log.debug(f"Preview:{file_dir}:{file_name}")
-    log.debug(f"Translated Preview:{file_dir}/{file_name}")
-    if os.path.exists(f"{BASE_DIR}{file_dir}/{file_name}"):
-        log.debug(f"Found, serve preview: {BASE_DIR}{file_dir}/{file_name}")
-        return send_from_directory(BASE_DIR + file_dir, file_name)
-    else:
-        log.debug(f"Serve preview not found: {BASE_DIR}{file_dir}/{file_name}")
->>>>>>> Stashed changes
-        log.error(f"Error file not found: {file_dir}/{file_name}")
+        log.error(f"Preview file not found: {full_path}")
         abort(404, description="File not found")
         
 

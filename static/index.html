@@ -61,15 +61,12 @@
       max-width: 200px;
       max-height: 200px;
       margin-top: 10px;
-<<<<<<< Updated upstream
-=======
       display: block;
     }
     .img_thumbnail {
       max-width: 600px;
       max-height: 600px;
       margin-top: 10px;
->>>>>>> Stashed changes
       display: block;
     }
     .content{
@@ -282,27 +279,18 @@
         document.getElementById('translate-button').onclick = () => translateContent(content);
         
         const thumbnail = document.getElementById('thumbnail');
-<<<<<<< Updated upstream
-        if (metadata.path && metadata.path.match(/\.(jpeg|jpg|JPG|gif|png)$/)) {
-=======
         if (metadata.path && metadata.path.match(/\.(jpeg|jpg|JPG|gif|png|PNG)$/)) {
->>>>>>> Stashed changes
           //console.log(thumbnail.parentElement)
           thumbnail.parentElement.href="/preview" + metadata.path;
           thumbnail.src = `/thumbnails${encodeURIComponent(metadata.path)}`;
           thumbnail.style.display = 'block';
-<<<<<<< Updated upstream
-=======
           thumbnail.className = 'img_thumbnail';
->>>>>>> Stashed changes
+
         } else {
           thumbnail.src = getIconForFileType(metadata.path);
           thumbnail.style.display = 'block';
           thumbnail.parentElement.href="javascript: void(0)";
-<<<<<<< Updated upstream
-=======
           thumbnail.className = 'thumbnail';
->>>>>>> Stashed changes
         }
         
         document.getElementById('file-details').style.display = 'block';
