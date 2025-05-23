@@ -1,6 +1,11 @@
+import os
+import threading
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory, g, abort
-from sqlalchemy import create_engine
+from flask_cors import CORS
+from sqlalchemy import create_engine, Column, Integer, String, Float
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm.exc import NoResultFound
 import time
 import requests  
 import pefile
