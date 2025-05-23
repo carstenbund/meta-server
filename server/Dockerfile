@@ -7,7 +7,6 @@ RUN apt-get update && \
     pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
-COPY ../mserver.py .
 COPY ../MyLogger.py .
 COPY ../static ./static
 COPY ../templates ./templates
