@@ -27,8 +27,8 @@ services:
     restart: unless-stopped
 
   llm_inference:
-    build: ./llm_inference_server
-    container_name: llm_inference_server
+    build: ./inference_server
+    container_name:inference_server
     ports:
       - "5001:5001"
     volumes:
