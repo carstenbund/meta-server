@@ -1,4 +1,4 @@
-# llm_inference_server/Dockerfile
+# inference_server/Dockerfile
 
 FROM python:3.10-slim
 
