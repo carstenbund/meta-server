@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV Preview</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background-color: #f0f0f0;
+      font-family: Arial, sans-serif;
+    }
+    #csv-container {
+      width: 100%;
+      background-color: white;
+      padding: 20px;
+      overflow: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    #csv-info {
+      margin-bottom: 15px;
+      padding: 10px;
+      background-color: #e8f4f8;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    #csv-content {
+      overflow-x: auto;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #2196F3;
+      color: white;
+      font-weight: bold;
+      position: sticky;
+      top: 0;
+    }
+    tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+    tr:hover {
+      background-color: #f5f5f5;
+    }
+    .error-message {
+      color: red;
+      padding: 20px;
+      background-color: #ffe6e6;
+      border: 1px solid #ff0000;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      font-size: 16px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div id="csv-container">
+    <div class="loading">Loading CSV file...</div>
+    <div id="csv-info" style="display: none;"></div>
+    <div id="csv-content"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script>
+    const fileUrl = "{{ file_url }}";
+
+    fetch(fileUrl)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.text();
+      })
+      .then(csvText => {
+        // Hide loading message
+        document.querySelector('.loading').style.display = 'none';
+
+        // Parse CSV using XLSX
+        const workbook = XLSX.read(csvText, { type: 'string' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+        // Get data as array of arrays
+        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        // Display info
+        const infoDiv = document.getElementById('csv-info');
+        infoDiv.style.display = 'block';
+        infoDiv.innerHTML = `<strong>Rows:</strong> ${data.length} | <strong>Columns:</strong> ${data[0] ? data[0].length : 0}`;
+
+        // Create table
+        let tableHtml = '<table id="csv-table">';
+
+        // Add header row if exists
+        if (data.length > 0) {
+          tableHtml += '<thead><tr>';
+          data[0].forEach(cell => {
+            tableHtml += `<th>${escapeHtml(cell !== undefined ? String(cell) : '')}</th>`;
+          });
+          tableHtml += '</tr></thead>';
+        }
+
+        // Add data rows
+        tableHtml += '<tbody>';
+        for (let i = 1; i < data.length; i++) {
+          tableHtml += '<tr>';
+          const row = data[i];
+          const maxCols = data[0].length;
+          for (let j = 0; j < maxCols; j++) {
+            const cell = row[j];
+            tableHtml += `<td>${escapeHtml(cell !== undefined ? String(cell) : '')}</td>`;
+          }
+          tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table>';
+
+        document.getElementById('csv-content').innerHTML = tableHtml;
+      })
+      .catch(err => {
+        console.error(err);
+        document.querySelector('.loading').style.display = 'none';
+        document.getElementById('csv-content').innerHTML =
+          `<div class="error-message">Error loading CSV file: ${err.message}</div>`;
+      });
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

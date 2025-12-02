@@ -354,6 +354,10 @@ def preview(filename):
         return render_template('pdf_preview.html', file_url=f"/preview/{filename}")
     elif filename.endswith('.docx') or filename.lower().endswith('.doc'):
         return render_template('doc_preview.html', file_url=f"/preview/{filename}")
+    elif filename.endswith('.xlsx') or filename.lower().endswith('.xls'):
+        return render_template('excel_preview.html', file_url=f"/preview/{filename}")
+    elif filename.lower().endswith('.csv'):
+        return render_template('csv_preview.html', file_url=f"/preview/{filename}")
     else:
         return "File type not supported", 400
 

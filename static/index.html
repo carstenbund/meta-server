@@ -335,7 +335,7 @@
       document.getElementById('preview-button').addEventListener('click', () => {
         filePath = `${currentFilePath}`
         const ext = filePath.split('.').pop().toLowerCase();
-        if (["docx", "doc", "pdf"].contains(ext)){
+        if (["docx", "doc", "pdf", "xls", "xlsx", "csv"].contains(ext)){
           const previewPane = document.getElementById('preview-pane');
           const previewUrl = `/doc_preview/${encodeURIComponent(`${currentFilePath}`)}`;
           console.log('Preview Url:', previewUrl);
