@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from MyLogger import Logger
 from llm_providers import get_llm_provider
 from llm_providers.factory import ProviderConfig, list_available_providers
+from document_preprocessor import preprocess_for_llm, preprocess_for_embedding
 
 # ---------- Configuration ----------
 DATABASE_URI = os.getenv('DATABASE_URI', 'sqlite:///instance/files.db')
@@ -103,12 +104,8 @@ def get_pe_info(file_path):
         return str(e)
 
 
-def clean_text(text):
-    """Clean and normalize text content"""
-    import re
-    text = re.sub(r'\n+', '\n', text)
-    text = text.strip()
-    return re.sub(r'\s+', ' ', text)
+# Note: clean_text() has been replaced with document_preprocessor functions
+# for enhanced cleaning and preprocessing
 
 
 # ---------- Indexing Worker Thread ----------
@@ -201,27 +198,36 @@ class IndexWorker(threading.Thread):
             if ext == ".txt":
                 try:
                     with open(path, 'r', encoding='utf-8') as f:
-                        content = f.read()
+                        raw_content = f.read()
                 except Exception as e:
                     log.warning(f"Failed to read text file {path}: {e}")
-                    content = ""
+                    raw_content = ""
             else:
                 parsed = parser.from_file(path)
-                content = parsed.get("content", "") if parsed else ""
+                raw_content = parsed.get("content", "") if parsed else ""
 
-            content = clean_text(content)
-
-            if content:
-                # Detect language
+            if raw_content:
+                # Detect language from raw content
                 try:
-                    lang = detect(content[:500])
+                    lang = detect(raw_content[:500])
                 except LangDetectException:
                     lang = "unknown"
+
+                # Use enhanced preprocessing for LLM analysis (4000 chars max)
+                # This removes headers, footers, artifacts, and focuses on subject matter
+                cleaned_for_llm = preprocess_for_llm(
+                    raw_content,
+                    max_chars=4000,  # Increased from 1000 for better context
+                    aggressive_cleaning=True
+                )
+
+                # Store cleaned content for future use
+                content = cleaned_for_llm
 
                 # Use LLM provider for inference
                 try:
                     response = self.llm_provider.infer_category_and_keywords(
-                        content=content[:1000],  # Use first 1000 chars
+                        content=cleaned_for_llm,
                         language=lang,
                         file_path=path
                     )
@@ -231,11 +237,19 @@ class IndexWorker(threading.Thread):
                     summary = response.summary
 
                     log.debug(f"LLM inference successful for {path}: category={inferred_category}")
+                    log.debug(f"Processed {len(cleaned_for_llm)} chars (from {len(raw_content)} raw)")
 
                     # Generate embeddings if enabled
                     if ENABLE_EMBEDDINGS:
                         try:
-                            emb_response = self.llm_provider.generate_embedding(content[:8000])
+                            # Use enhanced preprocessing for embeddings (12000 chars max)
+                            # Less aggressive cleaning to preserve more context
+                            cleaned_for_embedding = preprocess_for_embedding(
+                                raw_content,
+                                max_chars=12000  # Increased from 8000
+                            )
+
+                            emb_response = self.llm_provider.generate_embedding(cleaned_for_embedding)
                             # Store as JSON string
                             import json
                             embedding_vector = json.dumps(emb_response.embedding)
@@ -250,10 +264,14 @@ class IndexWorker(threading.Thread):
                     # Continue with partial metadata
 
         else:
-            # Other file types - just extract content
+            # Other file types - just extract content with basic preprocessing
             parsed = parser.from_file(path)
-            content = parsed.get("content", "") if parsed else ""
-            content = clean_text(content)
+            raw_content = parsed.get("content", "") if parsed else ""
+            if raw_content:
+                # Use basic preprocessing for other file types
+                content = preprocess_for_llm(raw_content, max_chars=5000, aggressive_cleaning=False)
+            else:
+                content = ""
 
         # Create or update metadata
         metadata = FileMetadata(

@@ -13,7 +13,13 @@ import magic
 from tika import parser
 from langdetect import detect
 import logging
+import sys
+import os
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from MyLogger import Logger
+from document_preprocessor import preprocess_for_llm
 
 # Create a logger instance
 log = Logger(log_name='mserver', log_level=logging.DEBUG).get_logger()
@@ -144,28 +150,47 @@ def scan_and_update_file(file_path):
         pe_info = content
     elif file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
         parsed = parser.from_file(file_path)
-        content = parsed.get('content', '') if parsed else ''
-        source_lang = detect(content) if content else 'unknown'
+        raw_content = parsed.get('content', '') if parsed else ''
 
-        payload = {
-            'file_path': file_path,
-            'content': content[:500],
-            'language': source_lang
-        }
+        if raw_content:
+            # Detect language from raw content
+            source_lang = detect(raw_content[:500]) if raw_content else 'unknown'
 
-        response = requests.post('http://localhost:5001/infer', json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            inferred_category = data.get('category')
-            keywords = data.get('keywords')
-            summary = data.get('summary')
+            # Use enhanced preprocessing for better LLM analysis
+            cleaned_content = preprocess_for_llm(
+                raw_content,
+                max_chars=4000,
+                aggressive_cleaning=True
+            )
 
-            if file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
-                content = summary
+            payload = {
+                'file_path': file_path,
+                'content': cleaned_content,  # Send cleaned content instead of raw
+                'language': source_lang
+            }
+
+            response = requests.post('http://localhost:5001/infer', json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                inferred_category = data.get('category')
+                keywords = data.get('keywords')
+                summary = data.get('summary')
+
+                if file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
+                    content = summary
+            else:
+                log.info(f"Error processing file {file_path}: {response.text}")
+                content = cleaned_content[:5000]  # Fallback to cleaned content
         else:
-            log.info(f"Error processing file {file_path}: {response.text}")
+            content = ""
     else:
-        content = extract_text_with_tika(file_path)
+        # Other file types - extract and preprocess with Tika
+        raw_content = extract_text_with_tika(file_path)
+        if raw_content:
+            # Apply basic preprocessing for other file types
+            content = preprocess_for_llm(raw_content, max_chars=5000, aggressive_cleaning=False)
+        else:
+            content = ""
 
     metadata = FileMetadata(
         path=file_path,

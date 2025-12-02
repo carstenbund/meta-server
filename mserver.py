@@ -16,6 +16,7 @@ from tika import parser
 from langdetect import detect
 
 from MyLogger import Logger
+from document_preprocessor import preprocess_for_llm
 
 
 # Create a logger instance
@@ -152,28 +153,47 @@ def scan_and_update_file(file_path):
         pe_info = content
     elif file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
         parsed = parser.from_file(file_path)
-        content = parsed.get('content', '') if parsed else ''
-        source_lang = detect(content) if content else 'unknown'
-        
-        payload = {
-            'file_path': file_path,
-            'content': content[:500],
-            'language': source_lang
-        }
+        raw_content = parsed.get('content', '') if parsed else ''
 
-        response = requests.post('http://localhost:5001/infer', json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            inferred_category = data.get('category')
-            keywords = data.get('keywords')
-            summary = data.get('summary')
+        if raw_content:
+            # Detect language from raw content
+            source_lang = detect(raw_content[:500]) if raw_content else 'unknown'
 
-            if file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
-                content = summary
+            # Use enhanced preprocessing for better LLM analysis
+            cleaned_content = preprocess_for_llm(
+                raw_content,
+                max_chars=4000,
+                aggressive_cleaning=True
+            )
+
+            payload = {
+                'file_path': file_path,
+                'content': cleaned_content,  # Send cleaned content instead of raw
+                'language': source_lang
+            }
+
+            response = requests.post('http://localhost:5001/infer', json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                inferred_category = data.get('category')
+                keywords = data.get('keywords')
+                summary = data.get('summary')
+
+                if file_path.lower().endswith('.pdf') or file_path.lower().endswith('.docx'):
+                    content = summary
+            else:
+                log.info(f"Error processing file {file_path}: {response.text}")
+                content = cleaned_content[:5000]  # Fallback to cleaned content
         else:
-            log.info(f"Error processing file {file_path}: {response.text}")
+            content = ""
     else:
-        content = extract_text_with_tika(file_path)
+        # Other file types - extract and preprocess with Tika
+        raw_content = extract_text_with_tika(file_path)
+        if raw_content:
+            # Apply basic preprocessing for other file types
+            content = preprocess_for_llm(raw_content, max_chars=5000, aggressive_cleaning=False)
+        else:
+            content = ""
 
     metadata = FileMetadata(
         path=file_path,
