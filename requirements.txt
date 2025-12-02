@@ -144,3 +144,5 @@ wrapt==1.16.0
 xkit==0.0.0
 zeroconf==0.24.4
 zipp==3.19.2
+openai>=1.0.0
+anthropic>=0.18.0
