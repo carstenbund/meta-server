@@ -3,7 +3,8 @@
 import logging
 import requests
 from typing import Dict, List, Optional
-from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse
+from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse, TopicCandidate
+from .extraction_prompt import SYSTEM_PROMPT, build_combined_prompt, parse_combined_response
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,40 @@ class OllamaProvider(BaseLLMProvider):
         except Exception as e:
             log.error(f"Ollama inference failed: {e}")
             raise
+
+    def extract_with_topics(
+        self,
+        content: str,
+        candidate_topics: Optional[List[TopicCandidate]] = None,
+        language: str = 'en',
+        file_path: Optional[str] = None,
+    ) -> LLMResponse:
+        prompt = build_combined_prompt(content, candidate_topics, language, file_path)
+        response = requests.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {"temperature": 0.2, "num_predict": 2000},
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = data.get("message", {}).get("content", "")
+        result = parse_combined_response(text)
+        result.metadata = {
+            "model": self.model,
+            "provider": "ollama",
+            "eval_count": data.get("eval_count"),
+            "prompt_eval_count": data.get("prompt_eval_count"),
+        }
+        return result
 
     def generate_embedding(self, content: str) -> EmbeddingResponse:
         """

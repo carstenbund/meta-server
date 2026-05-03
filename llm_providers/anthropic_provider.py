@@ -2,7 +2,8 @@
 
 import logging
 from typing import Dict, List, Optional
-from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse
+from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse, TopicCandidate
+from .extraction_prompt import SYSTEM_PROMPT, build_combined_prompt, parse_combined_response
 
 try:
     from anthropic import Anthropic
@@ -83,6 +84,32 @@ class AnthropicProvider(BaseLLMProvider):
         except Exception as e:
             log.error(f"Anthropic inference failed: {e}")
             raise
+
+    def extract_with_topics(
+        self,
+        content: str,
+        candidate_topics: Optional[List[TopicCandidate]] = None,
+        language: str = 'en',
+        file_path: Optional[str] = None,
+    ) -> LLMResponse:
+        prompt = build_combined_prompt(content, candidate_topics, language, file_path)
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2000,
+            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+            timeout=self.timeout,
+        )
+        text = response.content[0].text
+        result = parse_combined_response(text)
+        result.metadata = {
+            "model": self.model,
+            "provider": "anthropic",
+            "input_tokens": response.usage.input_tokens if hasattr(response, "usage") else None,
+            "output_tokens": response.usage.output_tokens if hasattr(response, "usage") else None,
+        }
+        return result
 
     def generate_embedding(self, content: str) -> EmbeddingResponse:
         """
