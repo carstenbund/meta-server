@@ -3,12 +3,13 @@ FROM python:3.10-slim
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y libmagic1 && \
-    pip install --no-cache-dir -r requirements.txt
+    apt-get install -y --no-install-recommends libmagic1 build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
-COPY ../MyLogger.py .
-COPY ../static ./static
-COPY ../templates ./templates
+COPY routes_retrieval.py .
 
 CMD ["python", "server.py"]

@@ -83,11 +83,13 @@ services:
     container_name: server
     environment:
       <<: *pg-env
+      BASE_DIR: ${BASE_DIR:-/data}
     ports:
       - "5000:5000"
     volumes:
       - ./shared_data:/data
       - ./common:/app/common
+      - ./llm_providers:/app/llm_providers
       - ./static:/app/static
       - ./templates:/app/templates
       - ./MyLogger.py:/app/MyLogger.py
