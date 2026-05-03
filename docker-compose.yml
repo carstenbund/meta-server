@@ -69,6 +69,23 @@ services:
       - inference
     restart: unless-stopped
 
+  topic-maintenance:
+    build: ./indexer
+    container_name: topic_maintenance
+    environment:
+      <<: *pg-env
+      MAINTENANCE_INTERVAL: ${MAINTENANCE_INTERVAL:-3600}
+      MERGE_THRESHOLD: ${MERGE_THRESHOLD:-0.95}
+      MERGE_NEAREST_K: ${MERGE_NEAREST_K:-20}
+      SIMILAR_TOP_K: ${SIMILAR_TOP_K:-10}
+      SIMILAR_MIN_WEIGHT: ${SIMILAR_MIN_WEIGHT:-0.7}
+    command: ["python", "-m", "indexer.topic_maintenance"]
+    volumes:
+      - ./common:/app/common
+      - ./llm_providers:/app/llm_providers
+      - ./MyLogger.py:/app/MyLogger.py
+    restart: unless-stopped
+
   inference:
     build: ./inference_server
     container_name: inference_server

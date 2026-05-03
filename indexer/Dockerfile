@@ -11,6 +11,8 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY index_worker.py .
+RUN mkdir -p /app/indexer
+COPY __init__.py index_worker.py topic_resolver.py topic_maintenance.py /app/indexer/
 
-CMD ["python", "index_worker.py"]
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "indexer.index_worker"]
