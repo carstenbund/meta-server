@@ -1,3 +1,5 @@
+# server/Dockerfile
+
 FROM python:3.10-slim
 
 WORKDIR /app
@@ -9,7 +11,8 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
-COPY routes_retrieval.py .
+RUN mkdir -p /app/server
+COPY __init__.py server.py routes_retrieval.py /app/server/
 
-CMD ["python", "server.py"]
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "server.server"]

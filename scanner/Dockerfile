@@ -11,6 +11,8 @@ RUN apt-get update && \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY scan_service.py .
+RUN mkdir -p /app/scanner
+COPY __init__.py scan_service.py /app/scanner/
 
-CMD ["python", "scan_service.py"]
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "scanner.scan_service"]
