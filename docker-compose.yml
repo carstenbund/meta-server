@@ -1,16 +1,52 @@
 # docker-compose.yml
+#
+# This stack expects an existing Postgres reachable as $DATABASE_URL with
+# the pgvector extension installed and the schema applied via:
+#   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v EMBED_DIM=1536 \
+#        -f common/migrations/0001_init.sql
+#
+# Required env (typically supplied via a .env file alongside this compose):
+#   DATABASE_URL          postgresql+psycopg://USER:PASS@host:5432/docbase
+#   EMBED_DIM             must match the dim used at migration apply time
+#   EMBED_INDEX_DOC       e.g. openai:text-embedding-3-small
+#   OPENAI_API_KEY        (or ANTHROPIC_API_KEY / OLLAMA_BASE_URL)
+# Optional:
+#   EMBED_QUERY, EMBED_INDEX_TOPIC, EMBED_TOPIC_CANDIDATE, EMBED_TOPIC_REFINE
+#   EMBED_*_PREFIX        per-role text prefix (e.g. "query: " for E5)
+#   LLM_PROVIDER          force a specific chat provider
+#   SCAN_DIRECTORY        defaults to /data inside the scanner container
+#   NUM_WORKERS           index worker thread count (default 4)
 
 version: '3.8'
+
+x-pg-env: &pg-env
+  DATABASE_URL: ${DATABASE_URL}
+  EMBED_DIM: ${EMBED_DIM}
+  EMBED_INDEX_DOC: ${EMBED_INDEX_DOC}
+  EMBED_INDEX_DOC_PREFIX: ${EMBED_INDEX_DOC_PREFIX:-}
+  EMBED_QUERY: ${EMBED_QUERY:-}
+  EMBED_QUERY_PREFIX: ${EMBED_QUERY_PREFIX:-}
+  EMBED_INDEX_TOPIC: ${EMBED_INDEX_TOPIC:-}
+  EMBED_TOPIC_CANDIDATE: ${EMBED_TOPIC_CANDIDATE:-}
+  EMBED_TOPIC_REFINE: ${EMBED_TOPIC_REFINE:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+  LLM_PROVIDER: ${LLM_PROVIDER:-}
 
 services:
 
   scanner:
     build: ./scanner
     container_name: scanner
+    environment:
+      <<: *pg-env
+      SCAN_DIRECTORY: ${SCAN_DIRECTORY:-/data}
+      SCAN_INTERVAL: ${SCAN_INTERVAL:-60}
     volumes:
       - ./shared_data:/data
-      - ./instance:/instance
       - ./common:/app/common
+      - ./MyLogger.py:/app/MyLogger.py
     depends_on:
       - inference
     restart: unless-stopped
@@ -18,10 +54,17 @@ services:
   indexer:
     build: ./indexer
     container_name: indexer
+    environment:
+      <<: *pg-env
+      NUM_WORKERS: ${NUM_WORKERS:-4}
+      POLL_INTERVAL: ${POLL_INTERVAL:-2}
+      TOPIC_CANDIDATE_TOP_K: ${TOPIC_CANDIDATE_TOP_K:-30}
     volumes:
       - ./shared_data:/data
-      - ./instance:/instance
       - ./common:/app/common
+      - ./llm_providers:/app/llm_providers
+      - ./document_preprocessor.py:/app/document_preprocessor.py
+      - ./MyLogger.py:/app/MyLogger.py
     depends_on:
       - inference
     restart: unless-stopped
@@ -38,14 +81,16 @@ services:
   server:
     build: ./server
     container_name: server
+    environment:
+      <<: *pg-env
     ports:
       - "5000:5000"
     volumes:
       - ./shared_data:/data
-      - ./instance:/instance
       - ./common:/app/common
       - ./static:/app/static
       - ./templates:/app/templates
+      - ./MyLogger.py:/app/MyLogger.py
     depends_on:
       - inference
     restart: unless-stopped

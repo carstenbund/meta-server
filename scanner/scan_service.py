@@ -1,146 +1,120 @@
-import os
-import time
+#!/usr/bin/env python3
+"""Filesystem scanner - Postgres-backed.
+
+Walks SCAN_DIRECTORY periodically and enqueues files into
+meta_server.index_queue for the index worker to process. A file is
+enqueued when:
+  - it has no row in meta_server.documents yet, OR
+  - the file's mtime is newer than documents.modification_date, OR
+  - documents.summary or documents.inferred_category is missing
+    (previous indexing failed midway).
+
+Already-pending queue rows are skipped to avoid duplicates.
+"""
+
 import logging
-from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.exc import IntegrityError
+import os
+import sys
+import time
+from typing import Optional, Tuple
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from MyLogger import Logger
+from common.db import Document, IndexQueueItem, make_engine, make_session_factory
 
-# ---------- Configuration ----------
-DATABASE_URI = 'sqlite:///instance/files.db'
-SCAN_DIRECTORY = '/win95/mcrlnsalg'
-SCAN_INTERVAL = 60  # in seconds
-
-# Ensure instance directory exists
-os.makedirs(os.path.dirname(DATABASE_URI.replace('sqlite:///', '')), exist_ok=True)
-
-# ---------- Logger Setup ----------
-log = Logger(log_name='scan_service', log_level=logging.DEBUG).get_logger()
-
-# ---------- SQLAlchemy Setup ----------
-Base = declarative_base()
-engine = create_engine(DATABASE_URI)
-Session = sessionmaker(bind=engine)
-
-# ---------- Models ----------
-class FileMetadata(Base):
-    __tablename__ = 'file_metadata'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    path = Column(String, unique=True, nullable=False)
-    size = Column(Integer, nullable=False)
-    modification_date = Column(Float, nullable=False)
-    category = Column(String)
-    inferred_category = Column(String)
-    keywords = Column(String)
-    summary = Column(String)
-    content = Column(Text)
-    file_type = Column(String)
-    creator_software = Column(String)
-    origin_date = Column(String)
-    pe_info = Column(Text)
+log = Logger(log_name="scan_service", log_level=logging.DEBUG).get_logger()
 
 
-class IndexQueue(Base):
-    __tablename__ = 'index_queue'
-    id = Column(Integer, primary_key=True)
-    file_path = Column(String, unique=True, nullable=False)
-    status = Column(String, default='pending')  # pending, in_progress, done, error
-    error = Column(Text, nullable=True)
-    added_at = Column(Float)
-    started_at = Column(Float)
-    finished_at = Column(Float)
+SCAN_DIRECTORY = os.getenv("SCAN_DIRECTORY", "/data")
+SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "60"))
 
 
-# ---------- Staleness Check ----------
-def is_file_stale_or_incomplete(file_path, metadata: FileMetadata) -> (bool, str):
+def is_stale(file_path: str, doc: Document) -> Tuple[bool, str]:
     try:
         disk_mtime = os.path.getmtime(file_path)
     except FileNotFoundError:
         return False, "File no longer exists"
 
-    if disk_mtime > metadata.modification_date:
+    if disk_mtime > (doc.modification_date or 0):
         return True, "Modified since last index"
-
-    if not metadata.content:
-        return True, "Missing content"
-    if not metadata.inferred_category:
+    if not doc.inferred_category:
         return True, "Missing inferred_category"
-    if not metadata.summary:
+    if not doc.summary:
         return True, "Missing summary"
-
     return False, ""
 
 
-# ---------- Main Scan Logic ----------
-def scan_and_queue(session, directory):
-    log.info(f"Starting scan cycle for {directory}")
+def scan_and_queue(session, directory: str) -> None:
+    log.info("Starting scan cycle for %s", directory)
+    queued = 0
     for subdir, _, files in os.walk(directory):
         for filename in files:
-            if filename.startswith('.') or os.path.islink(filename):
+            if filename.startswith("."):
                 continue
-
             file_path = os.path.abspath(os.path.join(subdir, filename))
-
-            # Attempt to get modification time first
+            if os.path.islink(file_path):
+                continue
             try:
-                disk_mod_time = os.path.getmtime(file_path)
-                file_size = os.path.getsize(file_path)
+                os.path.getmtime(file_path)
             except FileNotFoundError:
-                log.warning(f"Skipped (file vanished): {file_path}")
+                log.warning("Skipped (file vanished): %s", file_path)
                 continue
 
-            # Check DB for existing record
-            existing = session.query(FileMetadata).filter_by(path=file_path).first()
-            needs_queue = False
-            reason = ""
+            existing = session.execute(
+                select(Document).where(Document.path == file_path)
+            ).scalar_one_or_none()
 
-            if not existing:
-                needs_queue = True
-                reason = "Not indexed yet"
+            if existing is None:
+                reason: Optional[str] = "Not indexed yet"
             else:
-                stale, reason = is_file_stale_or_incomplete(file_path, existing)
-                needs_queue = stale
+                stale, reason_or_empty = is_stale(file_path, existing)
+                reason = reason_or_empty if stale else None
 
-            if needs_queue:
-                already_queued = session.query(IndexQueue).filter_by(file_path=file_path).first()
-                if already_queued:
-                    log.debug(f"Already queued: {file_path}")
-                    continue
+            if reason is None:
+                continue
 
-                try:
-                    session.add(IndexQueue(
-                        file_path=file_path,
-                        status='pending',
-                        added_at=time.time()
-                    ))
-                    session.commit()
-                    log.info(f"Queued for indexing: {file_path} ({reason})")
-                except IntegrityError:
-                    session.rollback()
-                    log.debug(f"Queue conflict (already exists): {file_path}")
-            else:
-                log.debug(f"Up-to-date: {file_path}")
+            stmt = (
+                pg_insert(IndexQueueItem.__table__)
+                .values(
+                    file_path=file_path,
+                    status="pending",
+                    added_at=time.time(),
+                )
+                .on_conflict_do_nothing(index_elements=["file_path"])
+            )
+            try:
+                result = session.execute(stmt)
+                session.commit()
+                if result.rowcount:
+                    queued += 1
+                    log.info("Queued: %s (%s)", file_path, reason)
+            except SQLAlchemyError as exc:
+                session.rollback()
+                log.warning("Queue insert failed for %s: %s", file_path, exc)
+
+    log.info("Scan cycle complete: queued %d new files", queued)
 
 
-# ---------- Continuous Service ----------
-def run_scan_service(directory, interval):
-    log.info("Initializing database...")
-    Base.metadata.create_all(engine)
-    log.debug(f"Watching directory: {directory}")
-    log.debug(f"Using database: {DATABASE_URI}")
+def run_scan_service(directory: str, interval: int) -> None:
+    engine = make_engine()
+    session_factory = make_session_factory(engine)
+    log.info("Watching directory: %s (interval=%ds)", directory, interval)
 
     try:
         while True:
-            with Session() as session:
+            with session_factory() as session:
                 scan_and_queue(session, directory)
             time.sleep(interval)
     except KeyboardInterrupt:
         log.info("Scan service terminated by user.")
-    except Exception as e:
-        log.exception(f"Fatal error in scan service: {e}")
+    except Exception as exc:
+        log.exception("Fatal error in scan service: %s", exc)
 
 
-# ---------- Entrypoint ----------
-if __name__ == '__main__':
+if __name__ == "__main__":
     run_scan_service(SCAN_DIRECTORY, SCAN_INTERVAL)
