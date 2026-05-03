@@ -1,26 +1,27 @@
 -- 0001_init.sql
--- Initial schema for meta-server topic-graph + RAG store.
+-- Initial schema for the meta-server topic-graph + RAG store.
 --
--- Apply with:
---   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f common/migrations/0001_init.sql
+-- EMBED_DIM is required and must match the embedding model your chosen
+-- llm_providers adapter produces (e.g. 1536 for text-embedding-3-small,
+-- 768 for nomic-embed-text). It is committed at apply time:
 --
--- Embedding dimension is parameterised at the top. Default 1536 matches
--- OpenAI text-embedding-3-small. If you switch to a different embedding
--- model (e.g. nomic-embed-text = 768, text-embedding-3-large = 3072),
--- change EMBED_DIM here and drop+recreate the embedding columns and
--- their HNSW indexes before re-indexing.
-
-\set EMBED_DIM 1536
+--   psql "$DATABASE_URL" \
+--        -v ON_ERROR_STOP=1 \
+--        -v EMBED_DIM=1536 \
+--        -f common/migrations/0001_init.sql
+--
+-- Switching embedding models later means dropping and recreating the
+-- embedding columns and their HNSW indexes, then re-indexing.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE SCHEMA IF NOT EXISTS meta;
-SET search_path TO meta, public;
+CREATE SCHEMA IF NOT EXISTS meta_server;
+SET search_path TO meta_server, public;
 
 -- ---------------------------------------------------------------------------
 -- documents: one row per indexed file. Replaces the SQLite file_metadata.
 -- ---------------------------------------------------------------------------
-CREATE TABLE meta.documents (
+CREATE TABLE meta_server.documents (
     id                 BIGSERIAL PRIMARY KEY,
     path               TEXT        NOT NULL UNIQUE,
     size               BIGINT      NOT NULL,
@@ -40,15 +41,15 @@ CREATE TABLE meta.documents (
     indexed_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX documents_inferred_category_idx ON meta.documents (inferred_category);
-CREATE INDEX documents_file_type_idx         ON meta.documents (file_type);
+CREATE INDEX documents_inferred_category_idx ON meta_server.documents (inferred_category);
+CREATE INDEX documents_file_type_idx         ON meta_server.documents (file_type);
 
 -- ---------------------------------------------------------------------------
 -- topics: nodes in the topic web. Centroid is the running mean of the
 -- embeddings of all chunks assigned to the topic, used to (a) prefilter
 -- candidate topics for new documents and (b) compute `similar` edges.
 -- ---------------------------------------------------------------------------
-CREATE TABLE meta.topics (
+CREATE TABLE meta_server.topics (
     id            BIGSERIAL PRIMARY KEY,
     name          TEXT        NOT NULL UNIQUE,
     description   TEXT,
@@ -61,7 +62,7 @@ CREATE TABLE meta.topics (
 );
 
 CREATE INDEX topics_centroid_idx
-    ON meta.topics
+    ON meta_server.topics
     USING hnsw (centroid vector_cosine_ops);
 
 -- ---------------------------------------------------------------------------
@@ -72,9 +73,9 @@ CREATE INDEX topics_centroid_idx
 --   parent   : reserved for future LLM-asserted hierarchy.
 --   related  : reserved for future LLM-asserted associations.
 -- ---------------------------------------------------------------------------
-CREATE TABLE meta.topic_edges (
-    src_topic_id  BIGINT      NOT NULL REFERENCES meta.topics(id) ON DELETE CASCADE,
-    dst_topic_id  BIGINT      NOT NULL REFERENCES meta.topics(id) ON DELETE CASCADE,
+CREATE TABLE meta_server.topic_edges (
+    src_topic_id  BIGINT      NOT NULL REFERENCES meta_server.topics(id) ON DELETE CASCADE,
+    dst_topic_id  BIGINT      NOT NULL REFERENCES meta_server.topics(id) ON DELETE CASCADE,
     kind          TEXT        NOT NULL CHECK (kind IN ('cooccurs', 'similar', 'parent', 'related')),
     weight        DOUBLE PRECISION NOT NULL DEFAULT 0,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -82,17 +83,17 @@ CREATE TABLE meta.topic_edges (
     CHECK (src_topic_id <> dst_topic_id)
 );
 
-CREATE INDEX topic_edges_dst_idx ON meta.topic_edges (dst_topic_id, kind);
+CREATE INDEX topic_edges_dst_idx ON meta_server.topic_edges (dst_topic_id, kind);
 
 -- ---------------------------------------------------------------------------
 -- chunks: topic-aligned spans of a document, each with its own embedding.
 -- A document produces N chunks where N == number of topics the LLM
 -- extraction pass identified for it.
 -- ---------------------------------------------------------------------------
-CREATE TABLE meta.chunks (
+CREATE TABLE meta_server.chunks (
     id           BIGSERIAL PRIMARY KEY,
-    document_id  BIGINT      NOT NULL REFERENCES meta.documents(id) ON DELETE CASCADE,
-    topic_id     BIGINT               REFERENCES meta.topics(id)    ON DELETE SET NULL,
+    document_id  BIGINT      NOT NULL REFERENCES meta_server.documents(id) ON DELETE CASCADE,
+    topic_id     BIGINT               REFERENCES meta_server.topics(id)    ON DELETE SET NULL,
     chunk_idx    INTEGER     NOT NULL,
     aspect       TEXT,                  -- 'definition' | 'method' | 'result' | 'context' | ...
     text         TEXT        NOT NULL,
@@ -104,10 +105,10 @@ CREATE TABLE meta.chunks (
     UNIQUE (document_id, chunk_idx)
 );
 
-CREATE INDEX chunks_document_idx  ON meta.chunks (document_id);
-CREATE INDEX chunks_topic_idx     ON meta.chunks (topic_id);
+CREATE INDEX chunks_document_idx  ON meta_server.chunks (document_id);
+CREATE INDEX chunks_topic_idx     ON meta_server.chunks (topic_id);
 CREATE INDEX chunks_embedding_idx
-    ON meta.chunks
+    ON meta_server.chunks
     USING hnsw (embedding vector_cosine_ops);
 
 -- ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ CREATE INDEX chunks_embedding_idx
 -- existing SQLite table so the scanner side can be ported with no schema
 -- surprises.
 -- ---------------------------------------------------------------------------
-CREATE TABLE meta.index_queue (
+CREATE TABLE meta_server.index_queue (
     id           BIGSERIAL PRIMARY KEY,
     file_path    TEXT        NOT NULL UNIQUE,
     status       TEXT        NOT NULL DEFAULT 'pending'
@@ -126,16 +127,16 @@ CREATE TABLE meta.index_queue (
     finished_at  DOUBLE PRECISION
 );
 
-CREATE INDEX index_queue_status_idx ON meta.index_queue (status)
+CREATE INDEX index_queue_status_idx ON meta_server.index_queue (status)
     WHERE status IN ('pending', 'in_progress');
 
 -- ---------------------------------------------------------------------------
 -- schema_version: trivial bookkeeping so future migrations can no-op cleanly.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS meta.schema_version (
+CREATE TABLE IF NOT EXISTS meta_server.schema_version (
     version     INTEGER     PRIMARY KEY,
     applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO meta.schema_version (version) VALUES (1)
+INSERT INTO meta_server.schema_version (version) VALUES (1)
 ON CONFLICT (version) DO NOTHING;

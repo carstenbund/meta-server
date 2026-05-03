@@ -12,16 +12,23 @@ SQL migrations for the meta-server Postgres store. Apply in numeric order.
 ## Apply
 
 ```sh
-export DATABASE_URL='postgresql://user:pass@host:5432/meta'
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f common/migrations/0001_init.sql
+export DATABASE_URL='postgresql://user:pass@localhost:5432/docbase'
+psql "$DATABASE_URL" \
+     -v ON_ERROR_STOP=1 \
+     -v EMBED_DIM=1536 \
+     -f common/migrations/0001_init.sql
 ```
+
+`EMBED_DIM` is required and chosen per deployment to match whichever
+embedding model your `llm_providers` adapter produces.
 
 ## Embedding dimension
 
-`0001_init.sql` declares `vector(1536)` (OpenAI `text-embedding-3-small`). To
-use a different model, edit the `\set EMBED_DIM` line at the top **before
-applying**. Changing it later means dropping and recreating the embedding
-columns and their HNSW indexes, then re-indexing all documents.
+The dim is committed at apply time via `-v EMBED_DIM=...`. Switching
+embedding models later means dropping and recreating the embedding
+columns and their HNSW indexes, then re-indexing all documents. The
+`embed_model` column on `topics` and `chunks` records which model
+produced each vector so drift is detectable.
 
 | Model                                 | Dim  |
 | ------------------------------------- | ---- |
@@ -32,7 +39,7 @@ columns and their HNSW indexes, then re-indexing all documents.
 
 ## Schema
 
-All objects live in the `meta` schema:
+All objects live in the `meta_server` schema:
 
 - `documents` — one row per indexed file
 - `topics` — nodes in the topic web (with running centroid)
