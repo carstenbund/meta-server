@@ -2,7 +2,27 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class TopicSpan:
+    """A topic the LLM identified in a document, with the supporting span.
+
+    `name` is the topic label (existing or new). `description` is a short
+    natural-language explanation used to seed the topic's centroid when
+    the topic is new. `span_text` is the verbatim passage that justifies
+    the assignment; char_start/char_end are offsets into the document
+    text passed to the extractor (best-effort; LLMs aren't always exact).
+    `aspect` classifies what kind of mention this is, e.g. 'definition',
+    'method', 'result', 'context'.
+    """
+    name: str
+    description: str
+    span_text: str
+    aspect: Optional[str] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
 
 
 @dataclass
@@ -11,8 +31,16 @@ class LLMResponse:
     category: Optional[str] = None
     keywords: Optional[str] = None
     summary: Optional[str] = None
+    topics: List[TopicSpan] = field(default_factory=list)
     raw_response: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class TopicCandidate:
+    """An existing topic offered to the LLM as a candidate during extraction."""
+    name: str
+    description: Optional[str] = None
 
 
 @dataclass
@@ -58,6 +86,23 @@ class BaseLLMProvider(ABC):
             LLMResponse with category, keywords, and summary
         """
         pass
+
+    def extract_with_topics(
+        self,
+        content: str,
+        candidate_topics: Optional[List[TopicCandidate]] = None,
+        language: str = 'en',
+        file_path: Optional[str] = None,
+    ) -> LLMResponse:
+        """Combined extraction: category, keywords, summary, AND topic spans.
+
+        Default implementation falls back to infer_category_and_keywords with
+        no topics. Providers override this to do everything in one call.
+
+        candidate_topics is the prefiltered list of existing topics the LLM
+        should prefer to assign to (or it can propose new names).
+        """
+        return self.infer_category_and_keywords(content, language=language, file_path=file_path)
 
     @abstractmethod
     def generate_embedding(self, content: str) -> EmbeddingResponse:

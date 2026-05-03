@@ -1,350 +1,341 @@
 #!/usr/bin/env python3
-"""
-Modernized Index Worker using LLM Provider Abstraction
+"""Index worker - topic-graph aware, Postgres-backed.
 
-This worker processes files from the index queue using configurable LLM providers
-(OpenAI, Anthropic, or Ollama) for document analysis and categorization.
+Reads pending jobs from meta_server.index_queue, parses each file, runs
+the combined LLM extraction (category + keywords + summary + topic
+spans), embeds each span via the INDEX_DOC role embedder, and writes
+documents/chunks/topics/topic_edges into Postgres.
+
+Concurrency: each worker thread holds its own SQLAlchemy session. Job
+pickup uses SELECT ... FOR UPDATE SKIP LOCKED so multiple workers can
+share the same queue without colliding.
 """
 
+import logging
 import os
 import sys
-import time
 import threading
-import logging
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.exc import SQLAlchemyError
-from langdetect import detect
-from langdetect.lang_detect_exception import LangDetectException
-from tika import parser
+import time
+import traceback
+from typing import Optional
+
 import magic
 import pefile
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from tika import parser as tika_parser
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from MyLogger import Logger
+from common.db import (
+    Chunk,
+    Document,
+    IndexQueueItem,
+    Topic,
+    make_engine,
+    make_session_factory,
+)
+from document_preprocessor import preprocess_for_embedding, preprocess_for_llm
+from indexer.topic_resolver import TopicResolver
 from llm_providers import get_llm_provider
-from llm_providers.factory import ProviderConfig, list_available_providers
-from document_preprocessor import preprocess_for_llm, preprocess_for_embedding
+from llm_providers.embeddings import EmbeddingRole, build_registry
+from llm_providers.factory import ProviderConfig
 
-# ---------- Configuration ----------
-DATABASE_URI = os.getenv('DATABASE_URI', 'sqlite:///instance/files.db')
-NUM_WORKERS = int(os.getenv('NUM_WORKERS', '4'))
-POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '2'))  # seconds
-
-# LLM Provider Configuration
-LLM_PROVIDER = os.getenv('LLM_PROVIDER')  # Optional: specify provider explicitly
-ENABLE_EMBEDDINGS = os.getenv('ENABLE_EMBEDDINGS', 'false').lower() == 'true'
-
-# ---------- Logger Setup ----------
-log = Logger(log_name='index_worker_llm', log_level=logging.DEBUG).get_logger()
-
-# ---------- SQLAlchemy Setup ----------
-Base = declarative_base()
-engine = create_engine(DATABASE_URI)
-Session = sessionmaker(bind=engine)
-
-# ---------- Models ----------
-class FileMetadata(Base):
-    __tablename__ = 'file_metadata'
-    from sqlalchemy import Column, Integer, String, Float, Text
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    path = Column(String, unique=True, nullable=False)
-    size = Column(Integer, nullable=False)
-    modification_date = Column(Float, nullable=False)
-    category = Column(String)
-    inferred_category = Column(String)
-    keywords = Column(String)
-    summary = Column(String)
-    content = Column(Text)
-    file_type = Column(String)
-    creator_software = Column(String)
-    origin_date = Column(String)
-    pe_info = Column(Text)
-    # New fields for LLM tracking
-    llm_provider = Column(String)
-    llm_model = Column(String)
-    embedding_vector = Column(Text)  # JSON-encoded vector
+log = Logger(log_name="index_worker", log_level=logging.DEBUG).get_logger()
 
 
-class IndexQueue(Base):
-    __tablename__ = 'index_queue'
-    from sqlalchemy import Column, Integer, String, Float, Text
-    id = Column(Integer, primary_key=True)
-    file_path = Column(String, unique=True, nullable=False)
-    status = Column(String, default='pending')  # pending, in_progress, done, error
-    error = Column(Text, nullable=True)
-    added_at = Column(Float)
-    started_at = Column(Float)
-    finished_at = Column(Float)
+NUM_WORKERS = int(os.getenv("NUM_WORKERS", "4"))
+POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "2"))
+LLM_PROVIDER = os.getenv("LLM_PROVIDER")
+CANDIDATE_TOP_K = int(os.getenv("TOPIC_CANDIDATE_TOP_K", "30"))
+LLM_INPUT_CHARS = int(os.getenv("LLM_INPUT_CHARS", "8000"))
+SPAN_EMBED_CHARS = int(os.getenv("SPAN_EMBED_CHARS", "4000"))
 
 
-# ---------- Helper Functions ----------
-def detect_file_type(file_path):
-    """Detect MIME type and file type using magic"""
-    file_magic = magic.Magic(mime=True)
-    mime_type = file_magic.from_file(file_path)
-    parts = mime_type.split('/')
-    file_type = parts[0]
-    creator_software = parts[1] if len(parts) > 1 else 'Unknown'
-    return mime_type, file_type, creator_software
+# ---------- helpers ----------
+
+def detect_file_type(path: str):
+    mime_type = magic.Magic(mime=True).from_file(path)
+    parts = mime_type.split("/", 1)
+    return mime_type, parts[0], parts[1] if len(parts) > 1 else "Unknown"
 
 
-def get_pe_info(file_path):
-    """Extract PE (Windows executable) information"""
+def get_pe_info(path: str) -> str:
     try:
-        pe = pefile.PE(file_path)
-        return str({
-            "entry_point": pe.OPTIONAL_HEADER.AddressOfEntryPoint,
-            "image_base": pe.OPTIONAL_HEADER.ImageBase,
-            "number_of_sections": pe.FILE_HEADER.NumberOfSections
-        })
-    except Exception as e:
-        return str(e)
+        pe = pefile.PE(path)
+        return str(
+            {
+                "entry_point": pe.OPTIONAL_HEADER.AddressOfEntryPoint,
+                "image_base": pe.OPTIONAL_HEADER.ImageBase,
+                "number_of_sections": pe.FILE_HEADER.NumberOfSections,
+            }
+        )
+    except Exception as exc:
+        return f"pefile_error: {exc}"
 
 
-# Note: clean_text() has been replaced with document_preprocessor functions
-# for enhanced cleaning and preprocessing
+def read_text_content(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".txt":
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        except Exception as exc:
+            log.warning("Failed to read text file %s: %s", path, exc)
+            return ""
+    parsed = tika_parser.from_file(path)
+    return (parsed or {}).get("content", "") or ""
 
 
-# ---------- Indexing Worker Thread ----------
+# ---------- worker thread ----------
+
 class IndexWorker(threading.Thread):
-    """Worker thread that processes files from the index queue"""
-
-    def __init__(self, worker_id, llm_provider):
-        """
-        Initialize worker
-
-        Args:
-            worker_id: Unique worker identifier
-            llm_provider: LLM provider instance
-        """
-        super().__init__()
+    def __init__(self, worker_id: int, session_factory, llm, embedders):
+        super().__init__(daemon=True)
         self.worker_id = worker_id
+        self.session_factory = session_factory
+        self.llm = llm
+        self.embedders = embedders
         self.running = True
-        self.llm_provider = llm_provider
-        log.info(f"Worker-{worker_id} initialized with provider: {llm_provider.get_provider_name()}")
 
-    def run(self):
-        """Main worker loop"""
-        log.info(f"Worker-{self.worker_id} started.")
-
+    def run(self) -> None:
+        log.info("Worker-%d started (provider=%s)", self.worker_id, self.llm.get_provider_name())
         while self.running:
-            with Session() as session:
-                # Get next pending job
-                job = session.execute(
-                    select(IndexQueue)
-                    .where(IndexQueue.status == 'pending')
-                    .limit(1)
-                ).scalar_one_or_none()
+            job_id = self._claim_next_job()
+            if job_id is None:
+                time.sleep(POLL_INTERVAL)
+                continue
+            self._process_job(job_id)
 
-                if not job:
-                    time.sleep(POLL_INTERVAL)
-                    continue
+    def _claim_next_job(self) -> Optional[int]:
+        """Atomically transition one pending row to in_progress and return its id."""
+        with self.session_factory() as session:
+            job = session.execute(
+                select(IndexQueueItem)
+                .where(IndexQueueItem.status == "pending")
+                .order_by(IndexQueueItem.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).scalar_one_or_none()
+            if job is None:
+                return None
+            job.status = "in_progress"
+            job.started_at = time.time()
+            session.commit()
+            return job.id
 
-                log.debug(f"Worker-{self.worker_id} processing {job.file_path}")
-                job.status = 'in_progress'
-                job.started_at = time.time()
+    def _process_job(self, job_id: int) -> None:
+        with self.session_factory() as session:
+            job = session.get(IndexQueueItem, job_id)
+            if job is None:
+                return
+            try:
+                self._index_file(session, job.file_path)
+                job.status = "done"
+                job.error = None
+                job.finished_at = time.time()
                 session.commit()
+                log.info("Worker-%d indexed %s", self.worker_id, job.file_path)
+            except Exception as exc:
+                session.rollback()
+                log.exception("Worker-%d failed on %s: %s", self.worker_id, job.file_path, exc)
+                with self.session_factory() as err_session:
+                    err_job = err_session.get(IndexQueueItem, job_id)
+                    if err_job is not None:
+                        err_job.status = "error"
+                        err_job.error = f"{exc}\n{traceback.format_exc()}"[:8000]
+                        err_job.finished_at = time.time()
+                        err_session.commit()
 
-                try:
-                    self.process_file(session, job)
-                    job.status = 'done'
-                    job.finished_at = time.time()
-                    session.commit()
-                    log.info(f"Worker-{self.worker_id} indexed {job.file_path}")
-                except Exception as e:
-                    job.status = 'error'
-                    job.error = str(e)
-                    job.finished_at = time.time()
-                    session.commit()
-                    log.error(f"Worker-{self.worker_id} failed on {job.file_path}: {e}")
+    # ---- core indexing ----
 
-    def process_file(self, session, job):
-        """
-        Process a single file using the LLM provider
-
-        Args:
-            session: SQLAlchemy session
-            job: IndexQueue job record
-        """
-        path = job.file_path
+    def _index_file(self, session, path: str) -> None:
         if not os.path.exists(path):
-            raise FileNotFoundError(f"File does not exist: {path}")
+            raise FileNotFoundError(path)
 
         size = os.path.getsize(path)
         mod_time = os.path.getmtime(path)
-        origin_date = str(mod_time)
-        mime_type, file_type, creator_software = detect_file_type(path)
+        mime_type, file_type, creator = detect_file_type(path)
         category = os.path.basename(os.path.dirname(path))
-        pe_info = ""
-        content = ""
-        inferred_category = None
-        keywords = None
-        summary = None
-        embedding_vector = None
 
         ext = os.path.splitext(path)[1].lower()
-
-        # Process based on file type
+        pe_info: Optional[str] = None
+        raw_content = ""
         if ext == ".exe":
             pe_info = get_pe_info(path)
-            content = pe_info
-            inferred_category = "Executable"
-
-        elif ext in [".pdf", ".doc", ".docx", ".txt"]:
-            # Extract text content
-            if ext == ".txt":
-                try:
-                    with open(path, 'r', encoding='utf-8') as f:
-                        raw_content = f.read()
-                except Exception as e:
-                    log.warning(f"Failed to read text file {path}: {e}")
-                    raw_content = ""
-            else:
-                parsed = parser.from_file(path)
-                raw_content = parsed.get("content", "") if parsed else ""
-
-            if raw_content:
-                # Detect language from raw content
-                try:
-                    lang = detect(raw_content[:500])
-                except LangDetectException:
-                    lang = "unknown"
-
-                # Use enhanced preprocessing for LLM analysis (4000 chars max)
-                # This removes headers, footers, artifacts, and focuses on subject matter
-                cleaned_for_llm = preprocess_for_llm(
-                    raw_content,
-                    max_chars=4000,  # Increased from 1000 for better context
-                    aggressive_cleaning=True
-                )
-
-                # Store cleaned content for future use
-                content = cleaned_for_llm
-
-                # Use LLM provider for inference
-                try:
-                    response = self.llm_provider.infer_category_and_keywords(
-                        content=cleaned_for_llm,
-                        language=lang,
-                        file_path=path
-                    )
-
-                    inferred_category = response.category
-                    keywords = response.keywords
-                    summary = response.summary
-
-                    log.debug(f"LLM inference successful for {path}: category={inferred_category}")
-                    log.debug(f"Processed {len(cleaned_for_llm)} chars (from {len(raw_content)} raw)")
-
-                    # Generate embeddings if enabled
-                    if ENABLE_EMBEDDINGS:
-                        try:
-                            # Use enhanced preprocessing for embeddings (12000 chars max)
-                            # Less aggressive cleaning to preserve more context
-                            cleaned_for_embedding = preprocess_for_embedding(
-                                raw_content,
-                                max_chars=12000  # Increased from 8000
-                            )
-
-                            emb_response = self.llm_provider.generate_embedding(cleaned_for_embedding)
-                            # Store as JSON string
-                            import json
-                            embedding_vector = json.dumps(emb_response.embedding)
-                            log.debug(f"Generated embedding for {path} (dim={len(emb_response.embedding)})")
-                        except NotImplementedError:
-                            log.debug(f"Embeddings not supported by {self.llm_provider.get_provider_name()}")
-                        except Exception as e:
-                            log.warning(f"Failed to generate embedding for {path}: {e}")
-
-                except Exception as e:
-                    log.error(f"LLM inference failed for {path}: {e}")
-                    # Continue with partial metadata
-
+            raw_content = pe_info
         else:
-            # Other file types - just extract content with basic preprocessing
-            parsed = parser.from_file(path)
-            raw_content = parsed.get("content", "") if parsed else ""
-            if raw_content:
-                # Use basic preprocessing for other file types
-                content = preprocess_for_llm(raw_content, max_chars=5000, aggressive_cleaning=False)
-            else:
-                content = ""
+            raw_content = read_text_content(path)
 
-        # Create or update metadata
-        metadata = FileMetadata(
+        cleaned_for_llm = preprocess_for_llm(
+            raw_content, max_chars=LLM_INPUT_CHARS, aggressive_cleaning=True
+        ) if raw_content else ""
+
+        try:
+            language = detect(raw_content[:500]) if raw_content else "unknown"
+        except LangDetectException:
+            language = "unknown"
+
+        resolver = TopicResolver(session, self.embedders)
+        candidates = (
+            resolver.prefilter_candidates(cleaned_for_llm, top_k=CANDIDATE_TOP_K)
+            if cleaned_for_llm
+            else []
+        )
+
+        response = None
+        if cleaned_for_llm:
+            try:
+                response = self.llm.extract_with_topics(
+                    cleaned_for_llm,
+                    candidate_topics=candidates,
+                    language=language,
+                    file_path=path,
+                )
+            except Exception as exc:
+                log.error("LLM extraction failed for %s: %s", path, exc)
+                response = None
+
+        index_doc_embedder = self.embedders.get(EmbeddingRole.INDEX_DOC)
+
+        document = self._upsert_document(
+            session,
+            path=path,
+            size=size,
+            mod_time=mod_time,
+            mime_type=mime_type,
+            file_type=file_type,
+            creator=creator,
+            category=category,
+            response=response,
+            pe_info=pe_info,
+            embed_model=index_doc_embedder.model,
+        )
+        # Wipe old chunks for this document on re-index.
+        session.query(Chunk).filter(Chunk.document_id == document.id).delete(synchronize_session=False)
+
+        seen_topic_ids: list[int] = []
+        if response is not None:
+            for idx, span in enumerate(response.topics):
+                resolved = resolver.resolve(span)
+                topic = resolved.topic
+
+                span_text = (span.span_text or "").strip()
+                if not span_text:
+                    span_text = f"{span.name}. {span.description or ''}".strip()
+                span_text = preprocess_for_embedding(span_text, max_chars=SPAN_EMBED_CHARS) or span_text
+
+                emb = index_doc_embedder.encode(span_text)
+                session.add(
+                    Chunk(
+                        document_id=document.id,
+                        topic_id=topic.id,
+                        chunk_idx=idx,
+                        aspect=span.aspect,
+                        text=span_text,
+                        char_start=span.char_start,
+                        char_end=span.char_end,
+                        embedding=emb.embedding,
+                        embed_model=emb.model,
+                    )
+                )
+                resolver.absorb_chunk(topic, emb.embedding)
+                if topic.id not in seen_topic_ids:
+                    resolver.link_document(topic)
+                    seen_topic_ids.append(topic.id)
+
+        resolver.record_cooccurrences(seen_topic_ids)
+        session.flush()
+
+    def _upsert_document(
+        self,
+        session,
+        *,
+        path: str,
+        size: int,
+        mod_time: float,
+        mime_type: str,
+        file_type: str,
+        creator: str,
+        category: str,
+        response,
+        pe_info: Optional[str],
+        embed_model: str,
+    ) -> Document:
+        category_inferred = response.category if response else None
+        keywords = response.keywords if response else None
+        summary = response.summary if response else None
+        llm_meta = (response.metadata or {}) if response else {}
+
+        values = dict(
             path=path,
             size=size,
             modification_date=mod_time,
+            origin_date=str(mod_time),
+            mime_type=mime_type,
+            file_type=file_type,
+            creator_software=creator,
             category=category,
-            inferred_category=inferred_category,
+            inferred_category=category_inferred,
             keywords=keywords,
             summary=summary,
-            content=summary if summary else content[:5000],  # Store summary or truncated content
-            file_type=file_type,
-            creator_software=creator_software,
-            origin_date=origin_date,
             pe_info=pe_info,
-            llm_provider=self.llm_provider.get_provider_name(),
-            llm_model=self.llm_provider.model,
-            embedding_vector=embedding_vector
+            llm_provider=llm_meta.get("provider") or self.llm.get_provider_name(),
+            llm_model=llm_meta.get("model") or self.llm.model,
+            embed_model=embed_model,
         )
-        session.merge(metadata)
+
+        stmt = pg_insert(Document.__table__).values(**values)
+        update_cols = {k: stmt.excluded[k] for k in values if k != "path"}
+        stmt = stmt.on_conflict_do_update(index_elements=["path"], set_=update_cols).returning(Document.__table__.c.id)
+        doc_id = session.execute(stmt).scalar_one()
+        return session.get(Document, doc_id)
 
 
-# ---------- Entrypoint ----------
-def main():
-    """Main entry point for the index worker"""
+# ---------- entrypoint ----------
+
+def main() -> None:
     log.info("=" * 60)
-    log.info("Starting Index Worker with LLM Provider Abstraction")
+    log.info("Index worker (Postgres / topic graph) starting")
     log.info("=" * 60)
 
-    # Initialize provider configuration
-    provider_config = ProviderConfig()
+    engine = make_engine()
+    session_factory = make_session_factory(engine)
 
-    # Log available providers
-    available = list_available_providers(provider_config)
-    log.info(f"Available providers: {available}")
-
-    # Get LLM provider
     try:
-        llm_provider = get_llm_provider(provider_name=LLM_PROVIDER, config=provider_config)
-        log.info(f"Using LLM provider: {llm_provider.get_provider_name()}")
-        log.info(f"Model: {llm_provider.model}")
-        log.info(f"Embeddings enabled: {ENABLE_EMBEDDINGS}")
-    except Exception as e:
-        log.error(f"Failed to initialize LLM provider: {e}")
-        log.error("Please configure at least one provider:")
-        log.error("  - Set OPENAI_API_KEY for OpenAI")
-        log.error("  - Set ANTHROPIC_API_KEY for Anthropic")
-        log.error("  - Ensure Ollama is running at OLLAMA_BASE_URL")
+        embedders = build_registry()
+    except Exception as exc:
+        log.error("Failed to build embedder registry: %s", exc)
         sys.exit(1)
 
-    # Create database tables
-    Base.metadata.create_all(engine)
+    try:
+        llm = get_llm_provider(provider_name=LLM_PROVIDER, config=ProviderConfig())
+    except Exception as exc:
+        log.error("Failed to initialize LLM provider: %s", exc)
+        sys.exit(1)
 
-    # Start workers
-    log.info(f"Starting {NUM_WORKERS} worker threads...")
-    workers = [IndexWorker(i, llm_provider) for i in range(NUM_WORKERS)]
+    log.info("LLM provider: %s (model=%s)", llm.get_provider_name(), llm.model)
+    log.info("Embedder roles: %s", {r.value: f"{embedders.get(r).provider}:{embedders.get(r).model}" for r in embedders.roles()})
+    log.info("Canonical embedding dim: %d", embedders.canonical_dim)
+
+    workers = [IndexWorker(i, session_factory, llm, embedders) for i in range(NUM_WORKERS)]
     for w in workers:
         w.start()
+    log.info("Spawned %d worker threads", NUM_WORKERS)
 
-    log.info("Index worker service is running. Press Ctrl+C to stop.")
-
-    # Main loop
     try:
         while True:
             time.sleep(5)
     except KeyboardInterrupt:
-        log.info("Stopping all workers...")
+        log.info("Stopping workers...")
         for w in workers:
             w.running = False
         for w in workers:
-            w.join()
-        log.info("Index worker service stopped.")
+            w.join(timeout=10)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

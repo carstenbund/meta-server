@@ -5,17 +5,12 @@ FROM python:3.10-slim
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y libmagic1 && \
-    pip install --no-cache-dir \
-        sqlalchemy \
-        requests \
-        python-magic \
-        tika \
-        langdetect \
-        pefile
+    apt-get install -y --no-install-recommends libmagic1 build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
-COPY index_service.py .
-COPY ../MyLogger.py .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "index_service.py"]
+COPY index_worker.py .
 
+CMD ["python", "index_worker.py"]

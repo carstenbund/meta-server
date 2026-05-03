@@ -2,7 +2,8 @@
 
 import logging
 from typing import Dict, List, Optional
-from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse
+from .base import BaseLLMProvider, LLMResponse, EmbeddingResponse, TopicCandidate
+from .extraction_prompt import SYSTEM_PROMPT, build_combined_prompt, parse_combined_response
 
 try:
     from openai import OpenAI
@@ -84,6 +85,33 @@ class OpenAIProvider(BaseLLMProvider):
         except Exception as e:
             log.error(f"OpenAI inference failed: {e}")
             raise
+
+    def extract_with_topics(
+        self,
+        content: str,
+        candidate_topics: Optional[List[TopicCandidate]] = None,
+        language: str = 'en',
+        file_path: Optional[str] = None,
+    ) -> LLMResponse:
+        prompt = build_combined_prompt(content, candidate_topics, language, file_path)
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            timeout=self.timeout,
+        )
+        text = response.choices[0].message.content
+        result = parse_combined_response(text)
+        result.metadata = {
+            "model": self.model,
+            "provider": "openai",
+            "tokens_used": response.usage.total_tokens if hasattr(response, "usage") else None,
+        }
+        return result
 
     def generate_embedding(self, content: str) -> EmbeddingResponse:
         """
